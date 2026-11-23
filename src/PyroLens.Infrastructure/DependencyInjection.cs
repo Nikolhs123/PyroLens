@@ -25,7 +25,16 @@ public static class DependencyInjection
         var connectionString = configuration.GetConnectionString(ConnectionStringName)
             ?? throw new InvalidOperationException($"Connection string '{ConnectionStringName}' is missing.");
 
-        services.AddDbContext<PyroLensDbContext>(o => o.UseNpgsql(connectionString, npgsql => npgsql.UseNetTopologySuite()));
+        var database = configuration.GetSection(DatabaseOptions.Section).Get<DatabaseOptions>() ?? new DatabaseOptions();
+        services.AddDbContext<PyroLensDbContext>(o => o.UseNpgsql(connectionString, npgsql =>
+        {
+            npgsql.UseNetTopologySuite();
+            if (database.UseEntraId)
+            {
+                // Azure: no password; a managed identity gets a short-lived Entra token instead.
+                npgsql.ConfigureDataSource(dataSource => EntraAuthentication.Configure(dataSource, database.ManagedIdentityClientId));
+            }
+        }));
         services.AddScoped<DatabaseMigrator>();
         services.AddSingleton(TimeProvider.System);
 

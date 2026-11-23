@@ -16,7 +16,7 @@ builder.Services.ConfigureHttpJsonOptions(o =>
 });
 builder.Services.AddProblemDetails();
 builder.Services.AddHealthChecks()
-    .AddNpgSql(builder.Configuration.GetConnectionString(DependencyInjection.ConnectionStringName)!, name: "postgres", tags: ["ready"]);
+    .AddCheck<DatabaseHealthCheck>("postgres", tags: ["ready"]);
 
 var app = builder.Build();
 
