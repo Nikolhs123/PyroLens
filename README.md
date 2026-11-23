@@ -35,10 +35,12 @@ and builds coordination on top of them.
 - 🔁 **Idempotent writes**: one `INSERT … SELECT FROM unnest(…) ON CONFLICT DO NOTHING` per batch. Polls overlap on purpose and never duplicate.
 - 🎚️ **Confidence filter**: MODIS > 70 %, VIIRS nominal/high (the foties.gr rule). Configurable, and changeable per API request.
 - 🏭 **Industrial-source rule**: a spot that also burned on each of the previous 3 days (within 500 m) is flagged as a likely refinery or factory flare.
+- 🇬🇷 **Greece only**: each detection is tested against the Greek boundary plus a 2 km buffer (Natural Earth, Greek point of view), cut into 120 pieces with `ST_Subdivide` behind a GIST index. Coastal pixels stay in; fires across the border are stored but never open incidents.
 - 🧩 **Incident clustering**: new pixels join the nearest open incident (≤ 2 km). The rest are grouped with `ST_ClusterDBSCAN` in EPSG:2100 (Greek Grid, metres).
 - 🩺 **Operations**: health checks, SQL migrations under an advisory lock, one clusterer at a time across instances.
 
-A live run on 23 Nov 2026 ingested **271 detections** over Greece and its neighbours into **93 incidents** in under 3 seconds.
+A live run on 23 Nov 2026 fetched **271 detections** for the Greek bounding box: **131** fell inside Greece and became
+**57 incidents**; the rest (western Turkey, the southern Balkans, open sea) were stored and left out. The whole cycle took under 3 seconds.
 
 ## Architecture
 
@@ -49,7 +51,7 @@ flowchart LR
     subgraph Worker["Worker Service"]
         direction TB
         Parse["Parse + validate"] --> Write["Batch insert<br/>(idempotent)"]
-        Write --> Flag["Industrial-source rule"]
+        Write --> Flag["Industrial-source rule<br/>+ inside Greece?"]
         Flag --> Cluster["Clustering<br/>attach → DBSCAN → refresh"]
     end
 
@@ -70,7 +72,7 @@ flowchart LR
 
 All steps run in one transaction behind `pg_advisory_xact_lock`:
 
-1. **Candidates**: unassigned detections from the last 24 h that pass the confidence filter and are not flagged industrial.
+1. **Candidates**: unassigned detections from the last 24 h inside Greece (plus 2 km) that pass the confidence filter and are not flagged industrial.
 2. **Attach**: each candidate joins the nearest open incident whose detections lie within 2 km (`ST_DWithin` on geography, KNN `<->` ordering).
 3. **Cluster**: the remaining candidates are grouped with `ST_ClusterDBSCAN(eps = 1500 m, minpoints = 1)` after `ST_Transform` to EPSG:2100. Each cluster opens an incident.
 4. **Refresh**: centroid, convex-hull footprint, first/last seen, count and max FRP are recomputed for every incident that changed.
@@ -112,7 +114,7 @@ The Development settings point both services to `localhost:5432`.
 |---|---|
 | `GET /api/incidents?hours=48&status=detected` | Incidents with a detection in the last N hours, newest first |
 | `GET /api/incidents/{id}` | One incident with its detections |
-| `GET /api/detections?hours=24&modisConfidenceAbove=70&viirsConfidence=nominal,high&includeIndustrial=false` | Raw detections with a per-request confidence filter |
+| `GET /api/detections?hours=24&modisConfidenceAbove=70&viirsConfidence=nominal,high&includeIndustrial=false&includeOutsideArea=false` | Raw detections with a per-request confidence filter; outside Greece hidden by default |
 | `GET /health/live` · `GET /health/ready` | Liveness; readiness including PostgreSQL |
 
 <details>
@@ -121,14 +123,14 @@ The Development settings point both services to `localhost:5432`.
 ```json
 [
   {
-    "id": 55,
+    "id": 35,
     "status": "detected",
-    "latitude": 40.84202,
-    "longitude": 26.174438749999997,
+    "latitude": 39.6614875,
+    "longitude": 22.713675,
     "firstDetectedAt": "2026-11-23T10:47:00+00:00",
-    "lastDetectedAt": "2026-11-23T11:27:00+00:00",
+    "lastDetectedAt": "2026-11-23T12:25:00+00:00",
     "detectionCount": 8,
-    "maxFrpMegawatts": 36.6
+    "maxFrpMegawatts": 34.3
   }
 ]
 ```
@@ -142,6 +144,7 @@ dotnet test tests/PyroLens.IntegrationTests   # real SQL on postgis/postgis via 
 ```
 
 The integration tests cover idempotent re-ingestion, the three sample incidents, the industrial-source rule,
+the Greece boundary (pixels 1 km offshore kept, open sea and the Turkish side of the Evros dropped),
 attaching to an open incident, DBSCAN separation and options binding. CI runs both suites and builds the Docker images.
 
 ## Roadmap
@@ -159,14 +162,19 @@ attaching to an open incident, DBSCAN separation and options binding. CI runs bo
 ## Configuration
 
 Worker settings are in [`src/PyroLens.Worker/appsettings.json`](src/PyroLens.Worker/appsettings.json):
-FIRMS products and area, poll interval, confidence rule, industrial rule and clustering distances.
+FIRMS products and fetch bounding box, poll interval, confidence rule, industrial rule, the Greece filter
+(`DetectionFilter:RequireAreaOfInterest`) and clustering distances.
 Any value can be overridden with an environment variable, e.g. `Clustering__ClusterDistanceMeters=1000`.
+
+The Greece boundary migration is generated by [`tools/build_area_migration.ps1`](tools/build_area_migration.ps1)
+from the Natural Earth file; see the script for the steps.
 
 ## Data sources and attribution
 
 | Source | Used for | Terms |
 |---|---|---|
 | [NASA FIRMS](https://firms.modaps.eosdis.nasa.gov/) | Active fire detections (MODIS, VIIRS) | Free MAP_KEY, rate-limited per 10 minutes. *We acknowledge the use of data and imagery from NASA's Fire Information for Resource Management System (FIRMS), part of NASA's Earth Science Data and Information System (ESDIS).* |
+| [Natural Earth](https://www.naturalearthdata.com/) | Greek boundary (1:10m admin-0, Greek point of view) | Public domain |
 | Open-Meteo *(roadmap)* | Wind, humidity, temperature | Non-commercial use, CC BY 4.0 attribution |
 | EFFIS *(roadmap)* | Fire Weather Index | EFFIS terms of use |
 | OpenStreetMap *(roadmap)* | Settlements and roads | © OpenStreetMap contributors |
@@ -175,7 +183,7 @@ Terms and limits change; check each provider before deploying.
 
 ## Known limitations
 
-- The FIRMS query is a bounding box, so it also returns fires in western Turkey, Albania, North Macedonia and Bulgaria.
+- The 1:10m boundary leaves out the smallest islets (e.g. Kastellorizo); the 2 km buffer covers coastal pixels of the islands it includes.
 - Flares from refineries and factories are reduced by the confidence filter and the consecutive-days rule, not eliminated.
 - The industrial rule flags the newest detection only; earlier detections of the same spot keep their incident.
 - Incidents that grow into each other are not merged yet.

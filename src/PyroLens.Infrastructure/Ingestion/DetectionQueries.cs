@@ -19,6 +19,10 @@ public static class DetectionQueries
             (d.Instrument == Instrument.Viirs && accepted.Contains(d.ConfidenceClass)));
     }
 
+    /// <summary>Keeps detections inside an area of interest (with its buffer) when <paramref name="required"/> is true.</summary>
+    public static IQueryable<FireDetection> WhereInsideAreaOfInterest(this IQueryable<FireDetection> query, bool required) =>
+        required ? query.Where(d => d.AreaCode != null) : query;
+
     public static IReadOnlyList<ConfidenceClass> ParseViirsClasses(IEnumerable<string> values) =>
         values
             .Select(v => Enum.TryParse<ConfidenceClass>(v.Trim(), true, out var c) ? c : throw new ArgumentException($"Unknown VIIRS confidence '{v}'. Use low, nominal or high."))

@@ -8,7 +8,7 @@ using PyroLens.Infrastructure.Persistence;
 
 namespace PyroLens.Infrastructure.Ingestion;
 
-public sealed record WriteResult(int Received, int Inserted, int FlaggedIndustrial);
+public sealed record WriteResult(int Received, int Inserted, int FlaggedIndustrial, int InsideArea);
 
 /// <summary>
 /// Stores a batch of detections with one INSERT … SELECT FROM unnest(arrays) statement.
@@ -44,11 +44,20 @@ public sealed class DetectionWriter(PyroLensDbContext db, IOptions<DetectionFilt
           ) >= @days
         """;
 
+    // Uses the GIST index on the subdivided, buffered area boundaries.
+    private const string AssignAreaSql = """
+        UPDATE fire_detections d
+        SET area_code = p.area_code
+        FROM area_of_interest_parts p
+        WHERE d.id = ANY(@ids)
+          AND ST_Intersects(p.geom, d.location)
+        """;
+
     public async Task<WriteResult> WriteAsync(string source, IReadOnlyList<RawDetection> detections, CancellationToken ct)
     {
         if (detections.Count == 0)
         {
-            return new WriteResult(0, 0, 0);
+            return new WriteResult(0, 0, 0, 0);
         }
 
         await using var tx = await db.Database.BeginTransactionAsync(ct);
@@ -78,18 +87,28 @@ public sealed class DetectionWriter(PyroLensDbContext db, IOptions<DetectionFilt
             }
         }
 
-        var flagged = 0;
+        int flagged = 0, insideArea = 0;
         if (insertedIds.Count > 0)
         {
-            await using var flag = new NpgsqlCommand(FlagIndustrialSql, connection, npgsqlTx);
-            flag.Parameters.AddWithValue("ids", insertedIds.ToArray());
-            flag.Parameters.AddWithValue("radius_m", filter.Value.IndustrialRadiusMeters);
-            flag.Parameters.AddWithValue("days", filter.Value.IndustrialConsecutiveDays);
-            flagged = await flag.ExecuteNonQueryAsync(ct);
+            var ids = insertedIds.ToArray();
+
+            await using (var flag = new NpgsqlCommand(FlagIndustrialSql, connection, npgsqlTx))
+            {
+                flag.Parameters.AddWithValue("ids", ids);
+                flag.Parameters.AddWithValue("radius_m", filter.Value.IndustrialRadiusMeters);
+                flag.Parameters.AddWithValue("days", filter.Value.IndustrialConsecutiveDays);
+                flagged = await flag.ExecuteNonQueryAsync(ct);
+            }
+
+            await using (var area = new NpgsqlCommand(AssignAreaSql, connection, npgsqlTx))
+            {
+                area.Parameters.AddWithValue("ids", ids);
+                insideArea = await area.ExecuteNonQueryAsync(ct);
+            }
         }
 
         await tx.CommitAsync(ct);
-        return new WriteResult(detections.Count, insertedIds.Count, flagged);
+        return new WriteResult(detections.Count, insertedIds.Count, flagged, insideArea);
     }
 
     private static void Add<T>(NpgsqlCommand cmd, string name, NpgsqlDbType elementType, IEnumerable<T> values) =>

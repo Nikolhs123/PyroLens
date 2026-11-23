@@ -3,7 +3,8 @@ using PyroLens.Infrastructure.Firms;
 
 namespace PyroLens.Infrastructure.Ingestion;
 
-public sealed record IngestionCycleResult(int Received, int Inserted, int FlaggedIndustrial, int FailedProducts, ClusteringResult Clustering);
+public sealed record IngestionCycleResult(
+    int Received, int Inserted, int FlaggedIndustrial, int InsideArea, int FailedProducts, ClusteringResult Clustering);
 
 /// <summary>One ingestion cycle: fetch every FIRMS product, store new detections, then group them into incidents.</summary>
 public sealed class IngestionService(
@@ -14,7 +15,7 @@ public sealed class IngestionService(
 {
     public async Task<IngestionCycleResult> RunOnceAsync(CancellationToken ct)
     {
-        int received = 0, inserted = 0, flagged = 0, failed = 0;
+        int received = 0, inserted = 0, flagged = 0, insideArea = 0, failed = 0;
 
         foreach (var product in source.Products)
         {
@@ -27,10 +28,11 @@ public sealed class IngestionService(
                 received += result.Received;
                 inserted += result.Inserted;
                 flagged += result.FlaggedIndustrial;
+                insideArea += result.InsideArea;
 
                 logger.LogInformation(
-                    "FIRMS {Product}: {Received} rows, {Inserted} new, {Flagged} likely industrial, {Skipped} unparseable",
-                    product, result.Received, result.Inserted, result.FlaggedIndustrial, parsed.SkippedRows);
+                    "FIRMS {Product}: {Received} rows, {Inserted} new ({InsideArea} inside area of interest), {Flagged} likely industrial, {Skipped} unparseable",
+                    product, result.Received, result.Inserted, result.InsideArea, result.FlaggedIndustrial, parsed.SkippedRows);
             }
             catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
             {
@@ -44,6 +46,6 @@ public sealed class IngestionService(
             "Clustering: {Candidates} candidate detections, {Attached} joined open incidents, {NewIncidents} new incidents",
             clustering.Candidates, clustering.AttachedToExisting, clustering.NewIncidents);
 
-        return new IngestionCycleResult(received, inserted, flagged, failed, clustering);
+        return new IngestionCycleResult(received, inserted, flagged, insideArea, failed, clustering);
     }
 }

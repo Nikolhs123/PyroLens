@@ -33,8 +33,9 @@ public sealed class IngestionTests(PostgisFixture postgis)
         var first = await RunCycleAsync(services);
         var second = await RunCycleAsync(services);
 
-        Assert.Equal(17, first.Inserted);
-        Assert.Equal(17, second.Received);
+        Assert.Equal(18, first.Inserted);
+        Assert.Equal(17, first.InsideArea);
+        Assert.Equal(18, second.Received);
         Assert.Equal(0, second.Inserted);
         Assert.Equal(0, second.Clustering.NewIncidents);
     }
@@ -66,6 +67,36 @@ public sealed class IngestionTests(PostgisFixture postgis)
             .ToListAsync();
         Assert.Equal(2, lowConfidence.Count);
         Assert.All(lowConfidence, d => Assert.Null(d.IncidentId));
+
+        // Inland Turkey: inside the fetch bounding box, outside Greece.
+        var turkey = await db.Detections.SingleAsync(d => d.Longitude > 28.5);
+        Assert.Null(turkey.AreaCode);
+        Assert.Null(turkey.IncidentId);
+        Assert.Equal(17, await db.Detections.CountAsync(d => d.AreaCode == "GRC"));
+    }
+
+    [Fact]
+    public async Task Area_of_interest_keeps_coastal_pixels_and_drops_neighbours()
+    {
+        await using var services = await postgis.CreateServicesAsync(Now);
+        await using var scope = services.CreateAsyncScope();
+        var writer = scope.ServiceProvider.GetRequiredService<DetectionWriter>();
+        var clusterer = scope.ServiceProvider.GetRequiredService<IncidentClusterer>();
+
+        // Distances to the Greek boundary were measured in EPSG:2100 against the stored polygon.
+        var result = await writer.WriteAsync("TEST",
+        [
+            Viirs(37.925, 23.620, Now.AddHours(-1)), // sea off Piraeus, 1.1 km from the coast -> inside the 2 km buffer
+            Viirs(36.455, 28.240, Now.AddHours(-1)), // sea off Rhodes, 1.0 km from the coast -> inside
+            Viirs(36.500, 21.000, Now.AddHours(-1)), // open Ionian sea, 68 km -> outside
+            Viirs(41.000, 26.400, Now.AddHours(-1)), // Turkish side of the Evros, 2.8 km from the border -> outside
+        ], CancellationToken.None);
+
+        Assert.Equal(2, result.InsideArea);
+
+        var clustering = await clusterer.RunAsync(CancellationToken.None);
+        Assert.Equal(2, clustering.Candidates);
+        Assert.Equal(2, clustering.NewIncidents);
     }
 
     [Fact]
@@ -120,12 +151,12 @@ public sealed class IngestionTests(PostgisFixture postgis)
         var writer = scope.ServiceProvider.GetRequiredService<DetectionWriter>();
         var clusterer = scope.ServiceProvider.GetRequiredService<IncidentClusterer>();
 
-        // Two pixels 300 m apart and one ~11 km away.
+        // Two pixels 300 m apart and one ~11 km away, all inland Peloponnese.
         await writer.WriteAsync("TEST",
         [
             Viirs(37.9000, 22.9000, Now.AddHours(-2)),
             Viirs(37.9027, 22.9000, Now.AddHours(-2)),
-            Viirs(38.0000, 22.9000, Now.AddHours(-2)),
+            Viirs(37.8000, 22.9000, Now.AddHours(-2)),
         ], CancellationToken.None);
 
         var clustering = await clusterer.RunAsync(CancellationToken.None);

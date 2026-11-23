@@ -29,6 +29,7 @@ public sealed record DetectionDto(
     string Confidence,
     double? FrpMegawatts,
     bool LikelyIndustrial,
+    string? AreaCode,
     long? IncidentId);
 
 public sealed record IncidentDetailDto(IncidentDto Incident, IReadOnlyList<DetectionDto> Detections);
@@ -95,6 +96,7 @@ public static class Endpoints
     /// <summary>
     /// Raw detections. The confidence filter defaults to the configured rule (MODIS above 70%, VIIRS nominal/high)
     /// and can be changed per request, e.g. ?modisConfidenceAbove=50&amp;viirsConfidence=low,nominal,high.
+    /// Detections outside the area of interest (Greece plus 2 km) are hidden unless includeOutsideArea=true.
     /// </summary>
     private static async Task<Results<Ok<List<DetectionDto>>, ValidationProblem>> ListDetections(
         PyroLensDbContext db,
@@ -104,7 +106,8 @@ public static class Endpoints
         int hours = 24,
         int? modisConfidenceAbove = null,
         string? viirsConfidence = null,
-        bool includeIndustrial = false)
+        bool includeIndustrial = false,
+        bool includeOutsideArea = false)
     {
         if (hours is < 1 or > MaxHours)
         {
@@ -134,7 +137,8 @@ public static class Endpoints
         var since = clock.GetUtcNow().AddHours(-hours);
         var query = db.Detections.AsNoTracking()
             .Where(d => d.AcquiredAt >= since)
-            .WherePassesConfidence(modis, viirs);
+            .WherePassesConfidence(modis, viirs)
+            .WhereInsideAreaOfInterest(defaults.Value.RequireAreaOfInterest && !includeOutsideArea);
 
         if (!includeIndustrial)
         {
@@ -146,7 +150,7 @@ public static class Endpoints
     }
 
     private static readonly System.Linq.Expressions.Expression<Func<FireDetection, DetectionDto>> ToDto = d => new DetectionDto(
-        d.Id, d.Source, d.Instrument, d.Latitude, d.Longitude, d.AcquiredAt, d.ConfidenceRaw, d.FrpMegawatts, d.LikelyIndustrial, d.IncidentId);
+        d.Id, d.Source, d.Instrument, d.Latitude, d.Longitude, d.AcquiredAt, d.ConfidenceRaw, d.FrpMegawatts, d.LikelyIndustrial, d.AreaCode, d.IncidentId);
 
     private static ValidationProblem HoursProblem() =>
         TypedResults.ValidationProblem(new Dictionary<string, string[]> { ["hours"] = [$"Must be between 1 and {MaxHours}."] });

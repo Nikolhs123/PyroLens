@@ -123,7 +123,7 @@ public class FirmsCsvParserTests
 
         var result = FirmsCsvParser.Parse(File.ReadAllText(path));
 
-        Assert.Equal(17, result.Detections.Count);
+        Assert.Equal(18, result.Detections.Count);
         Assert.Equal(0, result.SkippedRows);
         Assert.Equal(2, result.Detections.Count(d => d.Instrument == Instrument.Modis));
     }

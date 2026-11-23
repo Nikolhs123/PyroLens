@@ -48,6 +48,7 @@ public sealed class PyroLensDbContext(DbContextOptions<PyroLensDbContext> option
             e.Property(x => x.FrpMegawatts).HasColumnName("frp_mw");
             e.Property(x => x.IsDaytime).HasColumnName("is_daytime");
             e.Property(x => x.LikelyIndustrial).HasColumnName("likely_industrial");
+            e.Property(x => x.AreaCode).HasColumnName("area_code");
             e.Property(x => x.IncidentId).HasColumnName("incident_id");
             e.Property(x => x.IngestedAt).HasColumnName("ingested_at");
             e.HasOne(x => x.Incident).WithMany(i => i.Detections).HasForeignKey(x => x.IncidentId);

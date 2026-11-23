@@ -10,7 +10,7 @@ public sealed record ClusteringResult(int Candidates, int AttachedToExisting, in
 
 /// <summary>
 /// Turns unassigned fire detections into incidents, in one transaction:
-/// 1. pick recent detections that pass the confidence filter and are not likely industrial;
+/// 1. pick recent detections inside the area of interest that pass the confidence filter and are not likely industrial;
 /// 2. attach each one to the nearest open incident within AttachDistanceMeters;
 /// 3. group the rest with ST_ClusterDBSCAN (in EPSG:2100, Greek Grid, so distances are metres)
 ///    and open one incident per cluster;
@@ -124,6 +124,7 @@ public sealed class IncidentClusterer(
         var candidateIds = await db.Detections
             .Where(d => d.IncidentId == null && !d.LikelyIndustrial && d.AcquiredAt >= since)
             .WherePassesConfidence(f.ModisConfidenceAbove, DetectionQueries.ParseViirsClasses(f.ViirsConfidence))
+            .WhereInsideAreaOfInterest(f.RequireAreaOfInterest)
             .Select(d => d.Id)
             .ToArrayAsync(ct);
 

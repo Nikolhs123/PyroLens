@@ -21,6 +21,10 @@ public sealed class FireDetection
     public double? FrpMegawatts { get; set; }
     public bool? IsDaytime { get; set; }
     public bool LikelyIndustrial { get; set; }
+
+    /// <summary>Area of interest the detection falls in (with its buffer), e.g. "GRC"; null when outside all of them.</summary>
+    public string? AreaCode { get; set; }
+
     public long? IncidentId { get; set; }
     public Incident? Incident { get; set; }
     public DateTimeOffset IngestedAt { get; set; }

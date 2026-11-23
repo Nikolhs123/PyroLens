@@ -7,6 +7,7 @@
 #   - Larissa: VIIRS low confidence -> filtered out
 #   - Peloponnese: MODIS 40% -> filtered out
 #   - Aspropyrgos: same spot on 4 consecutive days -> newest one flagged as likely industrial
+#   - Inland Turkey: inside the fetch bounding box but outside Greece -> stored, never an incident
 latitude,longitude,bright_ti4,scan,track,acq_date,acq_time,satellite,instrument,confidence,version,bright_ti5,frp,daynight
 38.1700,23.7200,345.2,0.39,0.36,2025-08-14,0036,N,VIIRS,h,2.0NRT,298.1,18.4,N
 38.1734,23.7205,338.7,0.39,0.36,2025-08-14,0036,N,VIIRS,n,2.0NRT,296.4,11.2,N
@@ -25,3 +26,4 @@ latitude,longitude,bright_ti4,scan,track,acq_date,acq_time,satellite,instrument,
 38.0392,23.5903,331.5,0.38,0.35,2025-08-12,0040,N,VIIRS,h,2.0NRT,296.2,12.5,N
 38.0389,23.5898,329.4,0.38,0.35,2025-08-13,0040,N,VIIRS,h,2.0NRT,295.8,11.6,N
 38.0391,23.5901,332.0,0.38,0.35,2025-08-14,0040,N,VIIRS,h,2.0NRT,296.4,12.9,N
+38.7000,28.8000,344.8,0.45,0.39,2025-08-14,0037,N,VIIRS,h,2.0NRT,298.0,21.3,N

@@ -71,6 +71,12 @@ public sealed class DetectionFilterOptions
 
     [Range(50, 5000)]
     public double IndustrialRadiusMeters { get; set; } = 500;
+
+    /// <summary>
+    /// Only detections inside an area of interest (Greece plus a 2 km buffer) open incidents and appear in the API
+    /// by default. The FIRMS bounding box is just the fetch window and also covers neighbouring countries.
+    /// </summary>
+    public bool RequireAreaOfInterest { get; set; } = true;
 }
 
 public sealed class ClusteringOptions
