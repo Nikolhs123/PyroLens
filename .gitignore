@@ -6,6 +6,9 @@
 # dotenv files
 .env
 
+# Map build output (built into the API image by its Dockerfile)
+web/dist/
+
 # User-specific files
 *.rsuser
 *.suo

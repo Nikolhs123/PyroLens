@@ -6,6 +6,7 @@
 
   <ItemGroup>
     <PackageReference Include="AspNetCore.HealthChecks.NpgSql" Version="9.0.0" />
+    <PackageReference Include="NetTopologySuite.IO.GeoJSON4STJ" Version="4.0.0" />
   </ItemGroup>
 
   <PropertyGroup>

@@ -5,8 +5,8 @@
 **From satellite fire pixels to coordinated incidents.**
 
 PyroLens ingests NASA satellite fire detections, groups them into incidents with PostGIS,
-forecasts where each fire could spread in the next 1 and 3 hours, and (on the roadmap) helps a
-dispatcher coordinate resources, airspace and public alerts.
+forecasts where each fire could spread in the next 1 and 3 hours, shows it all on a live map,
+and (on the roadmap) helps a dispatcher coordinate resources, airspace and public alerts.
 
 [![CI](https://github.com/Nikolhs123/PyroLens/actions/workflows/ci.yml/badge.svg)](https://github.com/Nikolhs123/PyroLens/actions/workflows/ci.yml)
 ![.NET 9](https://img.shields.io/badge/.NET-9-512BD4?logo=dotnet&logoColor=white)
@@ -22,6 +22,10 @@ dispatcher coordinate resources, airspace and public alerts.
 > Fire detections are real (NASA FIRMS); resources, citizen reports and sensors will be **simulated**.
 
 ---
+
+<p align="center">
+  <img src="docs/map-incident.jpg" alt="PyroLens map: incident #38 near Feres, Evros, with its danger rating, wind and +1 h / +3 h spread areas" width="800">
+</p>
 
 ## The problem
 
@@ -59,6 +63,21 @@ The first live forecast run covered all 57 incidents (114 forecasts) in one cycl
 > The spread estimate is **simplified and indicative**. It ignores terrain, real vegetation maps, firebreaks and firefighting,
 > and uses a fixed drought factor and fuel load. The API says so in every response.
 
+### Map
+
+A React + TypeScript app (Vite, Leaflet, OpenStreetMap tiles), built into the API image and served at `/`.
+
+- Every active incident as a marker coloured by its +3 h danger rating, sized by its number of satellite pixels.
+- A list sorted by danger, then size, then recency, with a count per rating.
+- Selecting an incident zooms to it and shows where it is burning now, where it could be within 1 h and 3 h,
+  the wind (with an arrow), temperature, humidity, spread speed and direction, and the disclaimer.
+- An optional layer with the raw satellite pixels of the last 24 h.
+- Refreshes every minute and says how fresh the satellite data is; works on phones (map above, list below).
+
+<p align="center">
+  <img src="docs/map-overview.jpg" alt="PyroLens overview: 57 incidents across Greece, all rated low–moderate" width="640">
+</p>
+
 ## Architecture
 
 ```mermaid
@@ -82,7 +101,7 @@ flowchart LR
     Forecast --> DB
 
     API["ASP.NET Core API<br/>(EF Core reads)"] --> DB
-    Client["Dispatcher UI / map<br/>(roadmap)"] --> API
+    Client["React map<br/>(served by the API)"] -->|polls every minute| API
 ```
 
 | Project | Responsibility |
@@ -90,7 +109,8 @@ flowchart LR
 | `PyroLens.Core` | Domain types, FIRMS CSV and Open-Meteo parsers, fire danger and spread math (no dependencies) |
 | `PyroLens.Infrastructure` | Schema and migrations, FIRMS and Open-Meteo clients, batch writer, clustering, forecasts |
 | `PyroLens.Worker` | Two background loops: ingestion every 10 min, forecasts every 30 min |
-| `PyroLens.Api` | REST endpoints and health checks |
+| `PyroLens.Api` | REST endpoints (geometries as GeoJSON), health checks, serves the map |
+| `web/` | React + TypeScript map (Vite, Leaflet), with Vitest tests |
 
 <details>
 <summary><b>How clustering works</b></summary>
@@ -114,7 +134,8 @@ cd PyroLens
 docker compose up --build
 ```
 
-Then open http://localhost:8080/api/incidents.
+Then open **http://localhost:8080** for the map, or http://localhost:8080/api/incidents for the raw API.
+The first forecasts appear about a minute after start-up.
 
 - **Without a key**, the worker replays [`samples/firms_sample_synthetic.csv`](samples/firms_sample_synthetic.csv): a **synthetic** file, moved to today's date, that produces three incidents (Parnitha, North Evia, Rhodes), two filtered low-confidence pixels and one flagged industrial spot.
 - **With real data**: get a free [FIRMS MAP_KEY](https://firms.modaps.eosdis.nasa.gov/api/map_key/), copy `.env.example` to `.env`, set `FIRMS_MAP_KEY`, and run `docker compose up` again.
@@ -131,13 +152,23 @@ dotnet run --project src/PyroLens.Api
 ```
 
 The Development settings point both services to `localhost:5432`.
+
+Map with hot reload (needs Node 22; proxies `/api` to the API on port 8080). Without Node, `docker compose up --build`
+builds the map into the API image instead.
+
+```bash
+cd web
+npm ci
+npm run dev
+```
 </details>
 
 ## API
 
 | Endpoint | Description |
 |---|---|
-| `GET /api/incidents?hours=48&status=detected` | Incidents with a detection in the last N hours, newest first |
+| `GET /api/status` | When satellite data and forecasts last arrived, and how many incidents are active |
+| `GET /api/incidents?hours=48&status=detected` | Incidents with a detection in the last N hours, newest first, with footprint (GeoJSON) and latest danger rating |
 | `GET /api/incidents/{id}` | One incident with its detections |
 | `GET /api/incidents/{id}/forecast` | Latest +1 h and +3 h forecast: weather, danger index and rating, spread rate, spread area as GeoJSON |
 | `GET /api/detections?hours=24&modisConfidenceAbove=70&viirsConfidence=nominal,high&includeIndustrial=false&includeOutsideArea=false` | Raw detections with a per-request confidence filter; outside Greece hidden by default |
@@ -167,6 +198,7 @@ The Development settings point both services to `localhost:5432`.
 ```bash
 dotnet test tests/PyroLens.UnitTests          # parsers, fire danger and spread math, no dependencies
 dotnet test tests/PyroLens.IntegrationTests   # real SQL on postgis/postgis via Testcontainers (needs Docker)
+cd web && npm test                            # map helpers: sorting by danger, rating counts, compass, distances, times
 ```
 
 The unit tests check the FFDI equation and rating bands, spread rate, ellipse shape and orientation (a north wind pushes
@@ -174,12 +206,15 @@ the fire south, the width is length / LB, a turning wind bends the direction) an
 The integration tests cover idempotent re-ingestion, the three sample incidents, the industrial-source rule,
 the Greece boundary (pixels 1 km offshore kept, open sea and the Turkish side of the Evros dropped),
 attaching to an open incident, DBSCAN separation, options binding, and forecasts with fixed weather
-(+1 h inside +3 h, head run matches the reach downwind, re-runs upsert). CI runs both suites and builds the Docker images.
+(+1 h inside +3 h, head run matches the reach downwind, re-runs upsert). CI runs the .NET suites, typechecks, tests and
+builds the map, and builds both Docker images.
 
 ## Roadmap
 
 - [x] **Detection → incidents**: FIRMS ingestion, confidence filter, industrial rule, PostGIS clustering
 - [x] **Forecast**: Open-Meteo weather, McArthur fire danger index, spread areas at +1 h and +3 h
+- [x] **Map**: React + TypeScript dispatcher map with incidents, danger ratings and spread areas
+- [ ] **Live push**: SignalR instead of polling, driven by PostgreSQL `LISTEN/NOTIFY` from the worker
 - [ ] **Better forecast inputs**: rainfall-based drought factor, EFFIS Fire Weather Index, a fire danger map for all of Greece
 - [ ] **Incident lifecycle**: state machine from *Detected* to *Closed*, timeline, escalation rules, audit log
 - [ ] **Resources**: crews, tankers, aircraft and drones with atomic assignment (`409 Conflict` on races)
@@ -209,7 +244,7 @@ from the Natural Earth file; see the script for the steps.
 | [Open-Meteo](https://open-meteo.com/) | Hourly temperature, humidity, wind | Free, no key, non-commercial use, fewer than 10,000 calls a day, CC BY 4.0 attribution. 57 incidents every 30 min is about 2,700 locations a day |
 | [CSIRO Spark model library](https://research.csiro.au/spark/resources/model-library/mcarthur) | McArthur Mk5 equations, length-to-breadth ratio, ellipse geometry | Published reference implementation |
 | EFFIS *(roadmap)* | Fire Weather Index | EFFIS terms of use |
-| OpenStreetMap *(roadmap)* | Settlements and roads | © OpenStreetMap contributors |
+| [OpenStreetMap](https://www.openstreetmap.org/copyright) | Map tiles | © OpenStreetMap contributors (ODbL). The public tile servers follow a [usage policy](https://operations.osmfoundation.org/policies/tiles/): fine for a demo, a hosted deployment with real traffic needs its own or a commercial tile provider |
 
 Terms and limits change; check each provider before deploying.
 

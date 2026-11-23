@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using NetTopologySuite.Geometries;
 using PyroLens.Core.Detections;
 using PyroLens.Core.Forecasting;
 using PyroLens.Core.Incidents;
@@ -11,6 +12,15 @@ using PyroLens.Infrastructure.Persistence;
 
 namespace PyroLens.Api;
 
+/// <summary>Latest +3 h forecast of an incident, enough to colour it on a map.</summary>
+public sealed record ForecastSummaryDto(
+    DateTimeOffset WeatherFrom,
+    FireDangerRating DangerRating,
+    double PeakFfdi,
+    double HeadDistanceMeters,
+    double SpreadBearingDegrees);
+
+/// <param name="Footprint">GeoJSON geometry of the detections' convex hull: a Point, LineString or Polygon.</param>
 public sealed record IncidentDto(
     long Id,
     IncidentStatus Status,
@@ -19,7 +29,9 @@ public sealed record IncidentDto(
     DateTimeOffset FirstDetectedAt,
     DateTimeOffset LastDetectedAt,
     int DetectionCount,
-    double? MaxFrpMegawatts);
+    double? MaxFrpMegawatts,
+    Geometry? Footprint,
+    ForecastSummaryDto? Forecast);
 
 public sealed record DetectionDto(
     long Id,
@@ -43,9 +55,7 @@ public sealed record WeatherDto(
     double MeanWindFromDegrees,
     double? MaxWindGustKmh);
 
-/// <summary>GeoJSON polygon: coordinates are [longitude, latitude] rings.</summary>
-public sealed record GeoJsonPolygon(string Type, double[][][] Coordinates);
-
+/// <param name="SpreadArea">GeoJSON polygon of where the fire could be by the end of the horizon.</param>
 public sealed record HorizonDto(
     int HorizonHours,
     WeatherDto Weather,
@@ -55,7 +65,7 @@ public sealed record HorizonDto(
     double HeadDistanceMeters,
     double LengthToBreadth,
     double SpreadBearingDegrees,
-    GeoJsonPolygon SpreadArea);
+    Geometry SpreadArea);
 
 public sealed record ForecastDto(
     long IncidentId,
@@ -68,12 +78,16 @@ public sealed record ForecastDto(
     string Attribution,
     IReadOnlyList<HorizonDto> Horizons);
 
+public sealed record StatusDto(DateTimeOffset? LastDetectionIngestedAt, DateTimeOffset? LastForecastIssuedAt, int ActiveIncidents);
+
 public static class Endpoints
 {
     private const int MaxHours = 168;
+    private const int ActiveHours = 48;
 
     public static RouteGroupBuilder MapPyroLensEndpoints(this RouteGroupBuilder api)
     {
+        api.MapGet("/status", GetStatus);
         api.MapGet("/incidents", ListIncidents);
         api.MapGet("/incidents/{id:long}", GetIncident);
         api.MapGet("/incidents/{id:long}/forecast", GetForecast);
@@ -81,9 +95,20 @@ public static class Endpoints
         return api;
     }
 
-    /// <summary>Incidents with a detection in the last <paramref name="hours"/> hours, newest first.</summary>
+    /// <summary>When data last arrived, so a client can show how fresh the map is.</summary>
+    private static async Task<Ok<StatusDto>> GetStatus(PyroLensDbContext db, TimeProvider clock, CancellationToken ct)
+    {
+        var since = clock.GetUtcNow().AddHours(-ActiveHours);
+
+        return TypedResults.Ok(new StatusDto(
+            await db.Detections.MaxAsync(d => (DateTimeOffset?)d.IngestedAt, ct),
+            await db.Forecasts.MaxAsync(f => (DateTimeOffset?)f.IssuedAt, ct),
+            await db.Incidents.CountAsync(i => i.Status != IncidentStatus.Closed && i.LastDetectedAt >= since, ct)));
+    }
+
+    /// <summary>Incidents with a detection in the last <paramref name="hours"/> hours, newest first, with footprint and latest forecast.</summary>
     private static async Task<Results<Ok<List<IncidentDto>>, ValidationProblem>> ListIncidents(
-        PyroLensDbContext db, TimeProvider clock, CancellationToken ct, int hours = 48, IncidentStatus? status = null)
+        PyroLensDbContext db, TimeProvider clock, CancellationToken ct, int hours = ActiveHours, IncidentStatus? status = null)
     {
         if (hours is < 1 or > MaxHours)
         {
@@ -97,35 +122,28 @@ public static class Endpoints
             query = query.Where(i => i.Status == s);
         }
 
-        var incidents = await query
-            .OrderByDescending(i => i.LastDetectedAt)
-            .Select(i => new IncidentDto(
-                i.Id, i.Status, i.Centroid.Y, i.Centroid.X, i.FirstDetectedAt, i.LastDetectedAt, i.DetectionCount, i.MaxFrpMegawatts))
-            .ToListAsync(ct);
+        var incidents = await query.OrderByDescending(i => i.LastDetectedAt).ToListAsync(ct);
+        var forecasts = await LatestForecastSummariesAsync(db, incidents.Select(i => i.Id).ToList(), ct);
 
-        return TypedResults.Ok(incidents);
+        return TypedResults.Ok(incidents.Select(i => ToDto(i, forecasts.GetValueOrDefault(i.Id))).ToList());
     }
 
     private static async Task<Results<Ok<IncidentDetailDto>, NotFound>> GetIncident(long id, PyroLensDbContext db, CancellationToken ct)
     {
-        var incident = await db.Incidents.AsNoTracking()
-            .Where(i => i.Id == id)
-            .Select(i => new IncidentDto(
-                i.Id, i.Status, i.Centroid.Y, i.Centroid.X, i.FirstDetectedAt, i.LastDetectedAt, i.DetectionCount, i.MaxFrpMegawatts))
-            .SingleOrDefaultAsync(ct);
-
+        var incident = await db.Incidents.AsNoTracking().SingleOrDefaultAsync(i => i.Id == id, ct);
         if (incident is null)
         {
             return TypedResults.NotFound();
         }
 
+        var forecasts = await LatestForecastSummariesAsync(db, [id], ct);
         var detections = await db.Detections.AsNoTracking()
             .Where(d => d.IncidentId == id)
             .OrderBy(d => d.AcquiredAt)
-            .Select(ToDto)
+            .Select(ToDetectionDto)
             .ToListAsync(ct);
 
-        return TypedResults.Ok(new IncidentDetailDto(incident, detections));
+        return TypedResults.Ok(new IncidentDetailDto(ToDto(incident, forecasts.GetValueOrDefault(id)), detections));
     }
 
     /// <summary>Latest spread forecast of an incident: one entry per horizon (+1 h, +3 h).</summary>
@@ -169,15 +187,8 @@ public static class Endpoints
                 r.HeadDistanceMeters,
                 r.LengthToBreadth,
                 r.SpreadBearingDegrees,
-                ToGeoJson(r.SpreadArea))).ToList()));
+                r.SpreadArea)).ToList()));
     }
-
-    private static GeoJsonPolygon ToGeoJson(NetTopologySuite.Geometries.Polygon polygon) =>
-        new("Polygon",
-        [
-            .. new[] { polygon.ExteriorRing }.Concat(polygon.InteriorRings)
-                .Select(ring => ring.Coordinates.Select(c => new[] { Math.Round(c.X, 6), Math.Round(c.Y, 6) }).ToArray()),
-        ]);
 
     /// <summary>
     /// Raw detections. The confidence filter defaults to the configured rule (MODIS above 70%, VIIRS nominal/high)
@@ -231,11 +242,38 @@ public static class Endpoints
             query = query.Where(d => !d.LikelyIndustrial);
         }
 
-        var detections = await query.OrderByDescending(d => d.AcquiredAt).Select(ToDto).ToListAsync(ct);
+        var detections = await query.OrderByDescending(d => d.AcquiredAt).Select(ToDetectionDto).ToListAsync(ct);
         return TypedResults.Ok(detections);
     }
 
-    private static readonly System.Linq.Expressions.Expression<Func<FireDetection, DetectionDto>> ToDto = d => new DetectionDto(
+    /// <summary>Latest longest-horizon forecast per incident, in one query.</summary>
+    private static async Task<Dictionary<long, ForecastSummaryDto>> LatestForecastSummariesAsync(
+        PyroLensDbContext db, List<long> incidentIds, CancellationToken ct)
+    {
+        if (incidentIds.Count == 0)
+        {
+            return [];
+        }
+
+        var horizon = (short)ForecastOptions.Horizons.Max();
+        var latest = await db.Forecasts.AsNoTracking()
+            .Where(f => f.HorizonHours == horizon && incidentIds.Contains(f.IncidentId))
+            .GroupBy(f => f.IncidentId)
+            .Select(g => g.OrderByDescending(f => f.WeatherFrom)
+                .Select(f => new { f.IncidentId, f.WeatherFrom, f.DangerRating, f.PeakFfdi, f.HeadDistanceMeters, f.SpreadBearingDegrees })
+                .First())
+            .ToListAsync(ct);
+
+        return latest.ToDictionary(
+            f => f.IncidentId,
+            f => new ForecastSummaryDto(f.WeatherFrom, f.DangerRating, f.PeakFfdi, f.HeadDistanceMeters, f.SpreadBearingDegrees));
+    }
+
+    private static IncidentDto ToDto(Incident i, ForecastSummaryDto? forecast) => new(
+        i.Id, i.Status, i.Centroid.Y, i.Centroid.X, i.FirstDetectedAt, i.LastDetectedAt, i.DetectionCount, i.MaxFrpMegawatts,
+        i.Footprint, forecast);
+
+    private static readonly System.Linq.Expressions.Expression<Func<FireDetection, DetectionDto>> ToDetectionDto = d => new DetectionDto(
         d.Id, d.Source, d.Instrument, d.Latitude, d.Longitude, d.AcquiredAt, d.ConfidenceRaw, d.FrpMegawatts, d.LikelyIndustrial, d.AreaCode, d.IncidentId);
 
     private static ValidationProblem HoursProblem() =>
