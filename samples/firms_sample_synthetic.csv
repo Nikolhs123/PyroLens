@@ -1,0 +1,27 @@
+# SYNTHETIC DATA - NOT REAL FIRE DETECTIONS.
+# Hand-made rows in the FIRMS VIIRS CSV layout, used when Firms:Mode=File (no MAP_KEY needed).
+# The worker moves the dates forward so the newest day is today (UTC). What the rows exercise:
+#   - Parnitha, Attica: 5 VIIRS + 1 MODIS pixels within ~600 m -> one incident
+#   - North Evia: 3 pixels -> one incident
+#   - Rhodes: 2 pixels -> one incident
+#   - Larissa: VIIRS low confidence -> filtered out
+#   - Peloponnese: MODIS 40% -> filtered out
+#   - Aspropyrgos: same spot on 4 consecutive days -> newest one flagged as likely industrial
+latitude,longitude,bright_ti4,scan,track,acq_date,acq_time,satellite,instrument,confidence,version,bright_ti5,frp,daynight
+38.1700,23.7200,345.2,0.39,0.36,2025-08-14,0036,N,VIIRS,h,2.0NRT,298.1,18.4,N
+38.1734,23.7205,338.7,0.39,0.36,2025-08-14,0036,N,VIIRS,n,2.0NRT,296.4,11.2,N
+38.1702,23.7243,352.9,0.39,0.36,2025-08-14,0036,N,VIIRS,h,2.0NRT,300.3,24.9,N
+38.1736,23.7247,331.4,0.39,0.36,2025-08-14,0036,N,VIIRS,n,2.0NRT,295.0,8.7,N
+38.1668,23.7224,341.0,0.39,0.36,2025-08-14,0127,N20,VIIRS,h,2.0NRT,297.2,15.1,N
+38.1715,23.7230,322.5,1.00,1.00,2025-08-14,0010,Aqua,MODIS,85,6.1NRT,295.8,42.0,N
+38.9500,23.1500,336.1,0.42,0.38,2025-08-14,0036,N,VIIRS,h,2.0NRT,297.5,14.0,N
+38.9533,23.1540,329.8,0.42,0.38,2025-08-14,0036,N,VIIRS,n,2.0NRT,295.9,9.3,N
+38.9480,23.1545,333.3,0.42,0.38,2025-08-14,0127,N20,VIIRS,n,2.0NRT,296.6,10.8,N
+36.2500,27.9500,340.4,0.51,0.41,2025-08-14,0038,N,VIIRS,h,2.0NRT,297.0,16.6,N
+36.2530,27.9520,328.6,0.51,0.41,2025-08-14,0038,N,VIIRS,n,2.0NRT,295.3,7.9,N
+39.6000,22.4000,306.2,0.40,0.37,2025-08-14,0035,N,VIIRS,l,2.0NRT,291.0,1.9,N
+37.5000,22.1000,309.0,1.00,1.00,2025-08-14,0010,Aqua,MODIS,40,6.1NRT,290.2,5.5,N
+38.0390,23.5900,330.0,0.38,0.35,2025-08-11,0040,N,VIIRS,h,2.0NRT,296.0,12.0,N
+38.0392,23.5903,331.5,0.38,0.35,2025-08-12,0040,N,VIIRS,h,2.0NRT,296.2,12.5,N
+38.0389,23.5898,329.4,0.38,0.35,2025-08-13,0040,N,VIIRS,h,2.0NRT,295.8,11.6,N
+38.0391,23.5901,332.0,0.38,0.35,2025-08-14,0040,N,VIIRS,h,2.0NRT,296.4,12.9,N

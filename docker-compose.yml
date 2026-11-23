@@ -1,0 +1,48 @@
+# Local environment: PostGIS + API + ingestion worker.
+#   docker compose up --build
+# Real FIRMS data: set FIRMS_MODE=Api and FIRMS_MAP_KEY in a .env file next to this one.
+# Without them the worker replays the synthetic sample in samples/.
+
+services:
+  db:
+    image: postgis/postgis:17-3.5
+    environment:
+      POSTGRES_DB: pyrolens
+      POSTGRES_USER: pyrolens
+      POSTGRES_PASSWORD: pyrolens # local development only
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pyrolens -d pyrolens"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build:
+      context: .
+      dockerfile: src/PyroLens.Api/Dockerfile
+    environment:
+      ConnectionStrings__PyroLens: Host=db;Port=5432;Database=pyrolens;Username=pyrolens;Password=pyrolens
+    ports:
+      - "8080:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: .
+      dockerfile: src/PyroLens.Worker/Dockerfile
+    environment:
+      ConnectionStrings__PyroLens: Host=db;Port=5432;Database=pyrolens;Username=pyrolens;Password=pyrolens
+      Firms__Mode: ${FIRMS_MODE:-File}
+      Firms__MapKey: ${FIRMS_MAP_KEY:-}
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:

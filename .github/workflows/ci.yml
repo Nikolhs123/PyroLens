@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Restore
+        run: dotnet restore PyroLens.sln
+
+      - name: Build
+        run: dotnet build PyroLens.sln --no-restore -c Release
+
+      - name: Unit tests
+        run: dotnet test tests/PyroLens.UnitTests --no-build -c Release --logger "trx;LogFileName=unit.trx"
+
+      # Testcontainers starts postgis/postgis on the runner's Docker engine.
+      - name: Integration tests (PostGIS)
+        run: dotnet test tests/PyroLens.IntegrationTests --no-build -c Release --logger "trx;LogFileName=integration.trx"
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: tests/**/TestResults/*.trx
+
+  docker-images:
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build API image
+        run: docker build -f src/PyroLens.Api/Dockerfile -t pyrolens-api .
+
+      - name: Build worker image
+        run: docker build -f src/PyroLens.Worker/Dockerfile -t pyrolens-worker .
