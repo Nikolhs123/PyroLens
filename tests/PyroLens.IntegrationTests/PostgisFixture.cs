@@ -17,7 +17,7 @@ public sealed class PostgisFixture : IAsyncLifetime
 
     public Task DisposeAsync() => _container.DisposeAsync().AsTask();
 
-    public async Task<ServiceProvider> CreateServicesAsync(DateTimeOffset now)
+    public async Task<ServiceProvider> CreateServicesAsync(DateTimeOffset now, Action<IServiceCollection>? configure = null)
     {
         var database = "test_" + Guid.NewGuid().ToString("N");
         await using (var admin = new NpgsqlConnection(_container.GetConnectionString()))
@@ -38,11 +38,13 @@ public sealed class PostgisFixture : IAsyncLifetime
             })
             .Build();
 
-        var services = new ServiceCollection()
+        var collection = new ServiceCollection()
             .AddLogging()
             .AddPyroLensIngestion(configuration)
-            .AddSingleton<TimeProvider>(new FixedClock(now))
-            .BuildServiceProvider();
+            .AddPyroLensForecasting(configuration)
+            .AddSingleton<TimeProvider>(new FixedClock(now));
+        configure?.Invoke(collection);
+        var services = collection.BuildServiceProvider();
 
         await services.MigrateDatabaseAsync();
         return services;

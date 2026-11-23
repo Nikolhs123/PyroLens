@@ -2,8 +2,10 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using PyroLens.Infrastructure.Firms;
+using PyroLens.Infrastructure.Forecasting;
 using PyroLens.Infrastructure.Ingestion;
 using PyroLens.Infrastructure.Persistence;
+using PyroLens.Infrastructure.Weather;
 
 namespace PyroLens.Infrastructure;
 
@@ -14,6 +16,12 @@ public static class DependencyInjection
     /// <summary>Database, options and the read side. Used by both the API and the worker.</summary>
     public static IServiceCollection AddPyroLensCore(this IServiceCollection services, IConfiguration configuration)
     {
+        // Ingestion and forecasting both call this; register once.
+        if (services.Any(d => d.ServiceType == typeof(DatabaseMigrator)))
+        {
+            return services;
+        }
+
         var connectionString = configuration.GetConnectionString(ConnectionStringName)
             ?? throw new InvalidOperationException($"Connection string '{ConnectionStringName}' is missing.");
 
@@ -76,6 +84,25 @@ public static class DependencyInjection
         services.AddScoped<IncidentClusterer>();
         services.AddScoped<IngestionService>();
 
+        return services;
+    }
+
+    /// <summary>Weather and spread forecasts. Used by the worker only.</summary>
+    public static IServiceCollection AddPyroLensForecasting(this IServiceCollection services, IConfiguration configuration)
+    {
+        services.AddPyroLensCore(configuration);
+
+        services.AddOptions<ForecastOptions>().Bind(configuration.GetSection(ForecastOptions.Section)).ValidateDataAnnotations().ValidateOnStart();
+
+        var forecast = configuration.GetSection(ForecastOptions.Section).Get<ForecastOptions>() ?? new ForecastOptions();
+        services.AddHttpClient<IWeatherProvider, OpenMeteoClient>(http =>
+            {
+                http.BaseAddress = new Uri(forecast.OpenMeteoBaseUrl);
+                http.DefaultRequestHeaders.UserAgent.ParseAdd("PyroLens/0.2");
+            })
+            .AddStandardResilienceHandler();
+
+        services.AddScoped<ForecastService>();
         return services;
     }
 

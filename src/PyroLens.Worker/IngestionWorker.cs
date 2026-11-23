@@ -4,35 +4,12 @@ using PyroLens.Infrastructure.Ingestion;
 
 namespace PyroLens.Worker;
 
-/// <summary>Runs an ingestion cycle at start-up and then every Ingestion:PollInterval.</summary>
-public sealed class IngestionWorker(
-    IServiceProvider services,
-    IOptions<IngestionOptions> options,
-    ILogger<IngestionWorker> logger) : BackgroundService
+/// <summary>Fetches FIRMS and clusters incidents every Ingestion:PollInterval.</summary>
+public sealed class IngestionWorker(IServiceProvider services, IOptions<IngestionOptions> options, ILogger<IngestionWorker> logger)
+    : PeriodicWorker(services, logger)
 {
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
-    {
-        var migrated = false;
-        using var timer = new PeriodicTimer(options.Value.PollInterval);
-        do
-        {
-            try
-            {
-                if (!migrated)
-                {
-                    await services.MigrateDatabaseAsync(stoppingToken);
-                    migrated = true;
-                }
+    protected override TimeSpan Interval => options.Value.PollInterval;
 
-                await using var scope = services.CreateAsyncScope();
-                await scope.ServiceProvider.GetRequiredService<IngestionService>().RunOnceAsync(stoppingToken);
-            }
-            catch (Exception ex) when (!stoppingToken.IsCancellationRequested)
-            {
-                // Keep polling: the next cycle may succeed (database restart, network blip).
-                logger.LogError(ex, "Ingestion cycle failed");
-            }
-        }
-        while (await timer.WaitForNextTickAsync(stoppingToken));
-    }
+    protected override Task RunCycleAsync(IServiceProvider scopedServices, CancellationToken ct) =>
+        scopedServices.GetRequiredService<IngestionService>().RunOnceAsync(ct);
 }

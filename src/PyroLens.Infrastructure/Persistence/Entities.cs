@@ -1,5 +1,6 @@
 using NetTopologySuite.Geometries;
 using PyroLens.Core.Detections;
+using PyroLens.Core.Forecasting;
 using PyroLens.Core.Incidents;
 
 namespace PyroLens.Infrastructure.Persistence;
@@ -43,4 +44,28 @@ public sealed class Incident
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
     public List<FireDetection> Detections { get; } = [];
+}
+
+public sealed class IncidentForecast
+{
+    public long Id { get; set; }
+    public long IncidentId { get; set; }
+    public DateTimeOffset IssuedAt { get; set; }
+    public DateTimeOffset WeatherFrom { get; set; }
+    public short HorizonHours { get; set; }
+    public double MeanTemperatureC { get; set; }
+    public double MeanRelativeHumidityPercent { get; set; }
+    public double MeanWindSpeedKmh { get; set; }
+    public double MeanWindFromDegrees { get; set; }
+    public double? MaxWindGustKmh { get; set; }
+    public double DroughtFactor { get; set; }
+    public double FuelLoadTonnesPerHectare { get; set; }
+    public double PeakFfdi { get; set; }
+    public FireDangerRating DangerRating { get; set; }
+    public double PeakRateOfSpreadMetersPerHour { get; set; }
+    public double HeadDistanceMeters { get; set; }
+    public double LengthToBreadth { get; set; }
+    public double SpreadBearingDegrees { get; set; }
+    public Polygon SpreadArea { get; set; } = null!;
+    public required string Model { get; set; }
 }

@@ -1,7 +1,9 @@
 using Microsoft.AspNetCore.Http.HttpResults;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using PyroLens.Core.Detections;
+using PyroLens.Core.Forecasting;
 using PyroLens.Core.Incidents;
 using PyroLens.Infrastructure;
 using PyroLens.Infrastructure.Ingestion;
@@ -34,6 +36,38 @@ public sealed record DetectionDto(
 
 public sealed record IncidentDetailDto(IncidentDto Incident, IReadOnlyList<DetectionDto> Detections);
 
+public sealed record WeatherDto(
+    double MeanTemperatureC,
+    double MeanRelativeHumidityPercent,
+    double MeanWindSpeedKmh,
+    double MeanWindFromDegrees,
+    double? MaxWindGustKmh);
+
+/// <summary>GeoJSON polygon: coordinates are [longitude, latitude] rings.</summary>
+public sealed record GeoJsonPolygon(string Type, double[][][] Coordinates);
+
+public sealed record HorizonDto(
+    int HorizonHours,
+    WeatherDto Weather,
+    double PeakFfdi,
+    FireDangerRating DangerRating,
+    double PeakRateOfSpreadMetersPerHour,
+    double HeadDistanceMeters,
+    double LengthToBreadth,
+    double SpreadBearingDegrees,
+    GeoJsonPolygon SpreadArea);
+
+public sealed record ForecastDto(
+    long IncidentId,
+    DateTimeOffset IssuedAt,
+    DateTimeOffset WeatherFrom,
+    double DroughtFactor,
+    double FuelLoadTonnesPerHectare,
+    string Model,
+    string Disclaimer,
+    string Attribution,
+    IReadOnlyList<HorizonDto> Horizons);
+
 public static class Endpoints
 {
     private const int MaxHours = 168;
@@ -42,6 +76,7 @@ public static class Endpoints
     {
         api.MapGet("/incidents", ListIncidents);
         api.MapGet("/incidents/{id:long}", GetIncident);
+        api.MapGet("/incidents/{id:long}/forecast", GetForecast);
         api.MapGet("/detections", ListDetections);
         return api;
     }
@@ -92,6 +127,57 @@ public static class Endpoints
 
         return TypedResults.Ok(new IncidentDetailDto(incident, detections));
     }
+
+    /// <summary>Latest spread forecast of an incident: one entry per horizon (+1 h, +3 h).</summary>
+    private static async Task<Results<Ok<ForecastDto>, NotFound<ProblemDetails>>> GetForecast(long id, PyroLensDbContext db, CancellationToken ct)
+    {
+        var latest = await db.Forecasts.AsNoTracking()
+            .Where(f => f.IncidentId == id)
+            .MaxAsync(f => (DateTimeOffset?)f.WeatherFrom, ct);
+
+        if (latest is null)
+        {
+            return TypedResults.NotFound(new ProblemDetails
+            {
+                Title = "No forecast yet",
+                Detail = $"Incident {id} does not exist, is no longer active, or has not been forecast yet. Forecasts run every 30 minutes.",
+                Status = StatusCodes.Status404NotFound,
+            });
+        }
+
+        var rows = await db.Forecasts.AsNoTracking()
+            .Where(f => f.IncidentId == id && f.WeatherFrom == latest)
+            .OrderBy(f => f.HorizonHours)
+            .ToListAsync(ct);
+
+        var first = rows[0];
+        return TypedResults.Ok(new ForecastDto(
+            IncidentId: id,
+            IssuedAt: rows.Max(r => r.IssuedAt),
+            WeatherFrom: first.WeatherFrom,
+            DroughtFactor: first.DroughtFactor,
+            FuelLoadTonnesPerHectare: first.FuelLoadTonnesPerHectare,
+            Model: first.Model,
+            Disclaimer: "Simplified, indicative estimate. Ignores terrain, vegetation maps, firebreaks and suppression. Not for operational use.",
+            Attribution: "Weather data by Open-Meteo.com (CC BY 4.0). Fire detections: NASA FIRMS.",
+            Horizons: rows.Select(r => new HorizonDto(
+                r.HorizonHours,
+                new WeatherDto(r.MeanTemperatureC, r.MeanRelativeHumidityPercent, r.MeanWindSpeedKmh, r.MeanWindFromDegrees, r.MaxWindGustKmh),
+                r.PeakFfdi,
+                r.DangerRating,
+                r.PeakRateOfSpreadMetersPerHour,
+                r.HeadDistanceMeters,
+                r.LengthToBreadth,
+                r.SpreadBearingDegrees,
+                ToGeoJson(r.SpreadArea))).ToList()));
+    }
+
+    private static GeoJsonPolygon ToGeoJson(NetTopologySuite.Geometries.Polygon polygon) =>
+        new("Polygon",
+        [
+            .. new[] { polygon.ExteriorRing }.Concat(polygon.InteriorRings)
+                .Select(ring => ring.Coordinates.Select(c => new[] { Math.Round(c.X, 6), Math.Round(c.Y, 6) }).ToArray()),
+        ]);
 
     /// <summary>
     /// Raw detections. The confidence filter defaults to the configured rule (MODIS above 70%, VIIRS nominal/high)

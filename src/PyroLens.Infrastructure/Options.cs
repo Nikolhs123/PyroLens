@@ -100,6 +100,39 @@ public sealed class ClusteringOptions
     public int IncidentActiveHours { get; set; } = 48;
 }
 
+public sealed class ForecastOptions
+{
+    public const string Section = "Forecast";
+
+    public string OpenMeteoBaseUrl { get; set; } = "https://api.open-meteo.com/";
+
+    public TimeSpan Interval { get; set; } = TimeSpan.FromMinutes(30);
+
+    /// <summary>Lets the first ingestion cycle create incidents before the first forecast runs.</summary>
+    public TimeSpan InitialDelay { get; set; } = TimeSpan.FromMinutes(1);
+
+    /// <summary>Incidents with a detection in this many hours get a forecast.</summary>
+    [Range(1, 168)]
+    public int ActiveIncidentHours { get; set; } = 24;
+
+    /// <summary>Locations per Open-Meteo request.</summary>
+    [Range(1, 100)]
+    public int BatchSize { get; set; } = 50;
+
+    /// <summary>
+    /// McArthur drought factor, 1 (wet) to 10 (fully cured fuel). A fixed assumption for now:
+    /// 10 suits a Greek summer, lower values suit the wet season.
+    /// </summary>
+    [Range(1, 10)]
+    public double DroughtFactor { get; set; } = 8;
+
+    /// <summary>Fine fuel load in tonnes per hectare. 12 t/ha is a middle value for Mediterranean shrubland.</summary>
+    [Range(1, 60)]
+    public double FuelLoadTonnesPerHectare { get; set; } = 12;
+
+    public static readonly IReadOnlyList<int> Horizons = [1, 3];
+}
+
 public sealed class IngestionOptions
 {
     public const string Section = "Ingestion";
