@@ -15,6 +15,9 @@ and (on the roadmap) helps a dispatcher coordinate resources, airspace and publi
 ![Tests](https://img.shields.io/badge/tests-xUnit%20%2B%20Testcontainers-success)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
+**[Live demo → pyrolens.onrender.com](https://pyrolens.onrender.com)**
+<sub>Free hosting: the first visit after a quiet period can take up to a minute while the server wakes up.</sub>
+
 </div>
 
 > [!IMPORTANT]
@@ -222,7 +225,42 @@ builds the map, and builds both Docker images.
 - [ ] **LLM assistant**: incident summaries and draft announcements with structured output, fallback and human approval
 - [ ] **Citizens**: public map served from cache, report form, radius-based alerts through a queue with dead-lettering
 - [ ] **Scale**: k6 load tests (telemetry ingest, public map peak, resource races, airspace overlap) with before/after numbers
-- [ ] **Cloud**: Azure Container Apps and PostgreSQL Flexible Server, deployed from GitHub Actions
+- [x] **Live demo** on free tiers: Supabase (PostGIS), GitHub Actions (scheduled jobs), Render (API and map)
+- [ ] **Azure**: Container Apps, PostgreSQL Flexible Server and Entra sign-in, described in Bicep (ready, not deployed: about $15–20/month)
+
+## Deployment
+
+### Live demo (free)
+
+| Part | Runs on | How |
+|---|---|---|
+| Database | [Supabase](https://supabase.com) free plan | PostgreSQL with PostGIS, reached through the session pooler (IPv4) |
+| Ingestion and forecasts | GitHub Actions ([`scheduled-jobs.yml`](.github/workflows/scheduled-jobs.yml)) | Runs the published worker image with `--once ingestion` every 10 minutes and `--once forecast` at :05 and :35 |
+| API and map | [Render](https://render.com) free web service ([`render.yaml`](render.yaml)) | Builds `src/PyroLens.Api/Dockerfile` and redeploys on every push to `main` |
+
+Secrets live only in the platforms: `DATABASE_URL` and `FIRMS_MAP_KEY` as GitHub repository secrets,
+`ConnectionStrings__PyroLens` as a Render environment variable. The app accepts the `postgresql://…` URL exactly as
+Supabase shows it. Forecasts older than 7 days are deleted to stay well inside the 500 MB free database.
+The API starts even when the database is unreachable and reports it on `/health/ready`, so a bad setting never
+takes the map down.
+
+Limits of the free setup: the web service sleeps after 15 minutes without visitors, GitHub may start scheduled
+runs a few minutes late, and GitHub pauses schedules after 60 days without commits.
+
+### Azure (prepared, not deployed)
+
+[`deploy/azure`](deploy/azure) describes a production-style deployment in Bicep: PostgreSQL Flexible Server with
+PostGIS and **Microsoft Entra sign-in only** (no database password; a managed identity gets short-lived tokens),
+the FIRMS key in Key Vault, the API as a Container App that scales to zero, and the worker as two scheduled
+Container Apps Jobs. CI already publishes the images to `ghcr.io`. It is not running because the database would
+cost about $15–20 a month.
+
+```powershell
+az login
+./deploy/azure/deploy.ps1 -Phase infra
+az keyvault secret set --vault-name <printed name> --name firms-map-key --value <your key>
+./deploy/azure/deploy.ps1 -Phase apps
+```
 
 ## Configuration
 

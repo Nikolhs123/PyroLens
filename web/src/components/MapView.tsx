@@ -97,9 +97,37 @@ export function MapView({ incidents, detections, selected, forecast, onSelect }:
         );
       })}
 
+      <KeepSized />
       <FitToSelection selected={selected} forecast={forecast} />
     </MapContainer>
   );
+}
+
+/**
+ * Leaflet measures its container once, when it is created. If the stylesheet arrives after the script
+ * (common on a cold-started host), that measurement is 0×0 and the map is stuck at zoom 0 with every marker
+ * on one pixel. Re-measure whenever the container changes size, and fit Greece once it has a real size.
+ */
+function KeepSized() {
+  const map = useMap();
+
+  useEffect(() => {
+    const container = map.getContainer();
+    const hasSize = () => container.clientWidth > 0 && container.clientHeight > 0;
+    let fitted = hasSize();
+
+    const observer = new ResizeObserver(() => {
+      map.invalidateSize();
+      if (!fitted && hasSize()) {
+        map.fitBounds(GREECE);
+        fitted = true;
+      }
+    });
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, [map]);
+
+  return null;
 }
 
 /** Zooms to the selected incident (and its +3 h area once loaded); back to Greece when cleared. */
