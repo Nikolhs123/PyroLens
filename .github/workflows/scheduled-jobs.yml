@@ -1,0 +1,54 @@
+# The worker on a schedule, for free: GitHub Actions runs the published worker image once per cycle.
+#   ingestion: every 10 minutes   forecast: at :05 and :35
+# Needs two repository secrets: DATABASE_URL (Postgres URL, e.g. Supabase session pooler) and FIRMS_MAP_KEY.
+# GitHub may start scheduled runs a few minutes late, and turns schedules off after 60 days without commits.
+name: Scheduled jobs
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+    - cron: '5,35 * * * *'
+  workflow_dispatch:
+    inputs:
+      job:
+        description: Which cycle to run
+        type: choice
+        options: [ingestion, forecast]
+        default: ingestion
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Choose the cycle
+        id: pick
+        env:
+          EVENT: ${{ github.event_name }}
+          SCHEDULE: ${{ github.event.schedule }}
+          INPUT_JOB: ${{ inputs.job }}
+        run: |
+          if [ "$EVENT" = "workflow_dispatch" ]; then job="$INPUT_JOB"
+          elif [ "$SCHEDULE" = "5,35 * * * *" ]; then job="forecast"
+          else job="ingestion"; fi
+          echo "job=$job" >> "$GITHUB_OUTPUT"
+          echo "Running the $job cycle"
+
+      - name: Run the ${{ steps.pick.outputs.job }} cycle
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          FIRMS_MAP_KEY: ${{ secrets.FIRMS_MAP_KEY }}
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "::warning::DATABASE_URL secret is not set; nothing to do."
+            exit 0
+          fi
+          docker run --rm \
+            -e ConnectionStrings__PyroLens="$DATABASE_URL" \
+            -e Firms__Mode=Api \
+            -e Firms__MapKey="$FIRMS_MAP_KEY" \
+            ghcr.io/nikolhs123/pyrolens-worker:latest \
+            --once "${{ steps.pick.outputs.job }}"

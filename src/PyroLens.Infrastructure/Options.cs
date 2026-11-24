@@ -130,6 +130,10 @@ public sealed class ForecastOptions
     [Range(1, 60)]
     public double FuelLoadTonnesPerHectare { get; set; } = 12;
 
+    /// <summary>Forecasts older than this are deleted each cycle (about 3–5 MB a day are written for ~60 incidents).</summary>
+    [Range(1, 365)]
+    public int RetentionDays { get; set; } = 7;
+
     public static readonly IReadOnlyList<int> Horizons = [1, 3];
 }
 

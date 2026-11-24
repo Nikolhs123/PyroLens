@@ -1,0 +1,20 @@
+# Render Blueprint: the API and map as a free Docker web service.
+# Render builds src/PyroLens.Api/Dockerfile from this repository and redeploys on every push to main.
+# Free services sleep after 15 minutes without visitors; the next visit waits up to about a minute.
+services:
+  - type: web
+    name: pyrolens
+    runtime: docker
+    plan: free
+    region: frankfurt
+    branch: main
+    dockerfilePath: ./src/PyroLens.Api/Dockerfile
+    dockerContext: .
+    healthCheckPath: /health/live
+    envVars:
+      # The ASP.NET image listens on 8080; tell Render which port to route to.
+      - key: PORT
+        value: "8080"
+      # Same Postgres URL as the DATABASE_URL GitHub secret; you paste it when creating the Blueprint.
+      - key: ConnectionStrings__PyroLens
+        sync: false

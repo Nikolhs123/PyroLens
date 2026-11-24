@@ -82,6 +82,30 @@ public sealed class ForecastTests(PostgisFixture postgis)
     }
 
     [Fact]
+    public async Task Forecasts_older_than_the_retention_period_are_deleted()
+    {
+        await using var services = await CreateAsync();
+        await IngestSampleAsync(services);
+        await RunForecastAsync(services);
+
+        // Age the first six forecasts past the 7-day default.
+        await using (var scope = services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<PyroLensDbContext>();
+            await db.Forecasts.ExecuteUpdateAsync(s => s.SetProperty(f => f.WeatherFrom, f => f.WeatherFrom.AddDays(-8)));
+        }
+
+        var result = await RunForecastAsync(services);
+
+        Assert.Equal(6, result.Deleted);
+        Assert.Equal(6, result.ForecastsWritten);
+        await using var check = services.CreateAsyncScope();
+        var remaining = await check.ServiceProvider.GetRequiredService<PyroLensDbContext>().Forecasts.AsNoTracking().ToListAsync();
+        Assert.Equal(6, remaining.Count);
+        Assert.All(remaining, f => Assert.True(f.WeatherFrom > Now.AddDays(-1)));
+    }
+
+    [Fact]
     public async Task No_active_incidents_means_no_weather_request()
     {
         var weather = new FixedWeather();

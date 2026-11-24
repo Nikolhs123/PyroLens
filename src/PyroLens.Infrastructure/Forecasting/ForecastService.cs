@@ -11,7 +11,7 @@ using PyroLens.Infrastructure.Weather;
 
 namespace PyroLens.Infrastructure.Forecasting;
 
-public sealed record ForecastCycleResult(int ActiveIncidents, int ForecastsWritten, int Skipped);
+public sealed record ForecastCycleResult(int ActiveIncidents, int ForecastsWritten, int Skipped, int Deleted = 0);
 
 /// <summary>
 /// One forecast cycle: weather for every active incident's centre, then +1 h and +3 h spread areas.
@@ -66,6 +66,10 @@ public sealed class ForecastService(
         var now = clock.GetUtcNow();
         var since = now.AddHours(-o.ActiveIncidentHours);
 
+        // Keep the database small (free tiers cap it at 500 MB); old forecasts have no use once the hour has passed.
+        var cutoff = now.AddDays(-o.RetentionDays);
+        var deleted = await db.Forecasts.Where(f => f.WeatherFrom < cutoff).ExecuteDeleteAsync(ct);
+
         var incidents = await db.Incidents.AsNoTracking()
             .Where(i => i.Status != IncidentStatus.Closed && i.LastDetectedAt >= since)
             .OrderBy(i => i.Id)
@@ -74,7 +78,7 @@ public sealed class ForecastService(
 
         if (incidents.Count == 0)
         {
-            return new ForecastCycleResult(0, 0, 0);
+            return new ForecastCycleResult(0, 0, 0, deleted);
         }
 
         var maxHorizon = ForecastOptions.Horizons.Max();
@@ -110,7 +114,7 @@ public sealed class ForecastService(
             await tx.CommitAsync(ct);
         }
 
-        return new ForecastCycleResult(incidents.Count, batch.BatchCommands.Count, skipped);
+        return new ForecastCycleResult(incidents.Count, batch.BatchCommands.Count, skipped, deleted);
     }
 
     private static NpgsqlBatchCommand ToCommand(long incidentId, DateTimeOffset issuedAt, HorizonForecast f, SpreadSettings settings)

@@ -16,7 +16,7 @@ public sealed class ForecastWorker(IServiceProvider services, IOptions<ForecastO
     {
         var result = await scopedServices.GetRequiredService<ForecastService>().RunOnceAsync(ct);
         logger.LogInformation(
-            "Forecast: {Active} active incidents, {Written} forecasts written, {Skipped} skipped",
-            result.ActiveIncidents, result.ForecastsWritten, result.Skipped);
+            "Forecast: {Active} active incidents, {Written} forecasts written, {Skipped} skipped, {Deleted} old forecasts deleted",
+            result.ActiveIncidents, result.ForecastsWritten, result.Skipped, result.Deleted);
     }
 }

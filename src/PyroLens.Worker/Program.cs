@@ -34,8 +34,9 @@ try
             break;
         case "forecast":
             var result = await scope.ServiceProvider.GetRequiredService<ForecastService>().RunOnceAsync(CancellationToken.None);
-            logger.LogInformation("Forecast: {Active} active incidents, {Written} forecasts written, {Skipped} skipped",
-                result.ActiveIncidents, result.ForecastsWritten, result.Skipped);
+            logger.LogInformation(
+                "Forecast: {Active} active incidents, {Written} forecasts written, {Skipped} skipped, {Deleted} old forecasts deleted",
+                result.ActiveIncidents, result.ForecastsWritten, result.Skipped, result.Deleted);
             break;
         default:
             logger.LogError("Unknown --once value '{Once}'. Use 'ingestion' or 'forecast'.", once);
