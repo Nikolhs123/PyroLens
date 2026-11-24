@@ -77,6 +77,11 @@ public sealed class IncidentClusterer(
         JOIN _new_incidents n USING (cluster_id)
         WHERE f.id = c.id;
 
+        -- Every incident's timeline starts here, on the same clock as the dispatcher actions that follow.
+        INSERT INTO incident_events (incident_id, occurred_at, type, actor, to_status)
+        SELECT incident_id, @now, 'created', 'system', 'detected'
+        FROM _new_incidents;
+
         SELECT count(*)::int FROM _new_incidents;
         """;
 
@@ -155,6 +160,7 @@ public sealed class IncidentClusterer(
         {
             cluster.Parameters.AddWithValue("ids", candidateIds);
             cluster.Parameters.AddWithValue("cluster_m", c.ClusterDistanceMeters);
+            cluster.Parameters.AddWithValue("now", now.UtcDateTime);
             newIncidents = (int)(await cluster.ExecuteScalarAsync(ct))!;
         }
 

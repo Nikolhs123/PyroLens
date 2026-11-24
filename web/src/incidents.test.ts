@@ -30,6 +30,16 @@ describe('sortIncidents', () => {
     expect(ids(sortIncidents(sample, 'seen')).at(-1)).toBe(4);
   });
 
+  it('sorts by status urgency: active, confirmed, contained, detected', () => {
+    const board = [
+      incident(1, 'high', 1, undefined, null, 'detected'),
+      incident(2, 'high', 1, undefined, null, 'contained'),
+      incident(3, 'high', 1, undefined, null, 'active'),
+      incident(4, 'high', 1, undefined, null, 'confirmed'),
+    ];
+    expect(ids(sortIncidents(board, 'status'))).toEqual([3, 4, 2, 1]);
+  });
+
   it('sorts by id ascending, and reverses on request', () => {
     expect(ids(sortIncidents(sample, 'id'))).toEqual([1, 2, 3, 4, 5, 6]);
     expect(ids(sortIncidents(sample, 'id', true))).toEqual([6, 5, 4, 3, 2, 1]);

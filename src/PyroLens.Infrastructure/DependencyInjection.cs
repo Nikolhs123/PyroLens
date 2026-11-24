@@ -4,6 +4,7 @@ using Microsoft.Extensions.DependencyInjection;
 using PyroLens.Infrastructure.Firms;
 using PyroLens.Infrastructure.Forecasting;
 using PyroLens.Infrastructure.Ingestion;
+using PyroLens.Infrastructure.Operations;
 using PyroLens.Infrastructure.Persistence;
 using PyroLens.Infrastructure.Weather;
 
@@ -55,6 +56,12 @@ public static class DependencyInjection
             .ValidateDataAnnotations()
             .ValidateOnStart();
         services.AddOptions<ClusteringOptions>().Bind(configuration.GetSection(ClusteringOptions.Section)).ValidateDataAnnotations().ValidateOnStart();
+
+        // Dispatcher actions: lifecycle, resources, airspace.
+        services.AddOptions<OperationsOptions>().Bind(configuration.GetSection(OperationsOptions.Section));
+        services.AddScoped<IncidentOperations>();
+        services.AddScoped<ResourceOperations>();
+        services.AddScoped<AirspaceOperations>();
 
         return services;
     }

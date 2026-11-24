@@ -1,15 +1,19 @@
 import { useEffect, useState } from 'react';
 import type { Status } from '../api';
 import { compactAge, minutesSince, utcClock } from '../format';
+import { OperatorControl } from './OperatorControl';
 
 interface Props {
   status: Status | undefined;
   offline: boolean;
   active: number;
+  operatorKey: string | null;
+  onUnlock: (key: string) => void;
+  onLock: () => void;
 }
 
-/** Top strip of the console: clock, data freshness and link state at a glance. */
-export function StatusBar({ status, offline, active }: Props) {
+/** Top strip of the console: clock, data freshness, link state and operator mode at a glance. */
+export function StatusBar({ status, offline, active, operatorKey, onUnlock, onLock }: Props) {
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
     const timer = window.setInterval(() => setNow(new Date()), 1000);
@@ -35,6 +39,7 @@ export function StatusBar({ status, offline, active }: Props) {
       </span>
       <span className="spacer" />
       <span className="cell notice">DEMO · NOT AN EMERGENCY SERVICE · EMERGENCY 112</span>
+      <OperatorControl operatorKey={operatorKey} onUnlock={onUnlock} onLock={onLock} />
     </header>
   );
 }

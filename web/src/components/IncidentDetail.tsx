@@ -1,31 +1,78 @@
-import type { CSSProperties } from 'react';
-import type { Forecast, Incident } from '../api';
-import { compass, formatCoordinates, formatDistance, utcStamp } from '../format';
-import { ratingStyle } from '../ratings';
-import { RatingTag } from './RatingTag';
+import { useEffect, useState } from 'react';
+import {
+  type AirspaceReservation,
+  type Forecast,
+  type Incident,
+  type IncidentStatus,
+  type Resource,
+  type TimelineEvent,
+  actions,
+} from '../api';
+import { formatCoordinates, utcStamp } from '../format';
+import { ACTION_LABEL } from '../operations';
+import { AirspaceTab } from './AirspaceTab';
+import { ForecastTab } from './ForecastTab';
+import { LogTab } from './LogTab';
+import { StatusTag } from './StatusTag';
+import { UnitsTab } from './UnitsTab';
+
+type Tab = 'forecast' | 'units' | 'airspace' | 'log';
+const TABS: { id: Tab; label: string }[] = [
+  { id: 'forecast', label: 'FORECAST' },
+  { id: 'units', label: 'UNITS' },
+  { id: 'airspace', label: 'AIRSPACE' },
+  { id: 'log', label: 'LOG' },
+];
 
 interface Props {
   incident: Incident;
   /** undefined while loading, null when there is none yet. */
   forecast: Forecast | null | undefined;
+  resources: Resource[];
+  airspace: AirspaceReservation[];
+  timeline: TimelineEvent[] | undefined;
+  operatorKey: string | null;
+  /** Something changed on the server: reload shared data. */
+  onChanged: () => void;
   onClose: () => void;
 }
 
-export function IncidentDetail({ incident, forecast, onClose }: Props) {
-  const threeHours = forecast?.horizons.find((h) => h.horizonHours === 3);
-  const weather = forecast?.horizons.find((h) => h.horizonHours === 1)?.weather;
+export function IncidentDetail({ incident, forecast, resources, airspace, timeline, operatorKey, onChanged, onClose }: Props) {
+  const [tab, setTab] = useState<Tab>('forecast');
+  const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  // A different incident starts clean.
+  useEffect(() => setNotice(null), [incident.id]);
+
+  const onResult = (ok: boolean, text: string) => {
+    setNotice({ ok, text });
+    onChanged();
+  };
+
+  const move = async (to: IncidentStatus) => {
+    if (!operatorKey) return;
+    setBusy(true);
+    const result = await actions.changeStatus(operatorKey, incident.id, incident.status, to);
+    setBusy(false);
+    onResult(result.ok, result.ok ? `Incident ${incident.id} is now ${to}.` : result.message);
+  };
+
+  const committed = resources.filter((r) => r.incidentId === incident.id).length;
+  const reservations = airspace.filter((a) => a.incidentId === incident.id).length;
 
   return (
     <section className="detail" aria-labelledby="detail-title">
       <header className="detail-head">
         <h2 id="detail-title">INC {incident.id}</h2>
+        <StatusTag status={incident.status} long />
         <span className="coords">{formatCoordinates(incident.latitude, incident.longitude)}</span>
         <button type="button" className="close" onClick={onClose} title="Close (Esc)" aria-label="Close incident">
           ✕
         </button>
       </header>
 
-      <dl className="kv">
+      <dl className="kv kv-4">
         <div>
           <dt>PIXELS</dt>
           <dd>{incident.detectionCount}</dd>
@@ -44,88 +91,47 @@ export function IncidentDetail({ incident, forecast, onClose }: Props) {
         </div>
       </dl>
 
-      <h3 className="rule">
-        <span>SPREAD FORECAST</span>
-        {forecast && <span className="dim">WX {utcStamp(forecast.weatherFrom)}</span>}
-      </h3>
-
-      {forecast === undefined && <p className="dim">Loading forecast…</p>}
-      {forecast === null && <p className="dim">No forecast yet. Forecasts run every 30 min for incidents seen in the last 24 h.</p>}
-
-      {forecast && threeHours && weather && (
-        <>
-          <div className="danger">
-            <span className="ffdi">{threeHours.peakFfdi.toFixed(1)}</span>
-            <span className="ffdi-label">
-              FFDI
-              <RatingTag rating={threeHours.dangerRating} long />
-            </span>
-          </div>
-
-          <div className="wind">
-            <WindArrow towardsDegrees={weather.meanWindFromDegrees + 180} />
-            <dl className="kv kv-inline">
-              <div>
-                <dt>WIND</dt>
-                <dd>
-                  {compass(weather.meanWindFromDegrees)} {Math.round(weather.meanWindSpeedKmh)}
-                  {weather.maxWindGustKmh != null && <span className="dim"> G{Math.round(weather.maxWindGustKmh)}</span>} km/h
-                </dd>
-              </div>
-              <div>
-                <dt>TEMP</dt>
-                <dd>{Math.round(weather.meanTemperatureC)} °C</dd>
-              </div>
-              <div>
-                <dt>RH</dt>
-                <dd>{Math.round(weather.meanRelativeHumidityPercent)} %</dd>
-              </div>
-            </dl>
-          </div>
-
-          {/* Same colour as the spread areas on the map. */}
-          <table className="horizons" style={{ '--key-forecast': ratingStyle(incident).color } as CSSProperties}>
-            <thead>
-              <tr>
-                <th scope="col">WITHIN</th>
-                <th scope="col" className="num">HEAD RUN</th>
-                <th scope="col" className="num">ROS</th>
-                <th scope="col" className="num">TOWARDS</th>
-              </tr>
-            </thead>
-            <tbody>
-              {forecast.horizons.map((h) => (
-                <tr key={h.horizonHours}>
-                  <th scope="row">
-                    <span className={h.horizonHours === 1 ? 'key key-1h' : 'key key-3h'} aria-hidden="true" />+{h.horizonHours}H
-                  </th>
-                  <td className="num">{formatDistance(h.headDistanceMeters)}</td>
-                  <td className="num">{Math.round(h.peakRateOfSpreadMetersPerHour)} m/h</td>
-                  <td className="num">{compass(h.spreadBearingDegrees)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-
-          <p className="fine">
-            {forecast.disclaimer} Drought factor {forecast.droughtFactor}, fuel load {forecast.fuelLoadTonnesPerHectare} t/ha.
-          </p>
-        </>
+      {operatorKey && incident.nextStatuses.length > 0 && (
+        <div className="lifecycle" role="group" aria-label="Change status">
+          {incident.nextStatuses.map((to) => (
+            <button key={to} type="button" className={to === 'closed' ? 'btn' : 'btn btn-primary'} disabled={busy} onClick={() => move(to)}>
+              {ACTION_LABEL[to].toUpperCase()}
+            </button>
+          ))}
+        </div>
       )}
-    </section>
-  );
-}
 
-/** Points where the wind blows to. */
-function WindArrow({ towardsDegrees }: { towardsDegrees: number }) {
-  return (
-    <svg className="wind-arrow" viewBox="0 0 40 40" role="img" aria-label={`Wind blowing towards ${compass(towardsDegrees)}`}>
-      <circle cx="20" cy="20" r="18" />
-      <line x1="20" y1="2" x2="20" y2="6" className="tick" />
-      <g transform={`rotate(${towardsDegrees} 20 20)`}>
-        <line x1="20" y1="31" x2="20" y2="11" />
-        <polygon points="20,6 15,14 25,14" />
-      </g>
-    </svg>
+      {notice && (
+        <p className={notice.ok ? 'flash ok' : 'flash bad'} role={notice.ok ? 'status' : 'alert'}>
+          {notice.text}
+        </p>
+      )}
+
+      <div className="tabs" role="tablist" aria-label="Incident sections">
+        {TABS.map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            role="tab"
+            id={`tab-${t.id}`}
+            aria-selected={tab === t.id}
+            aria-controls={`panel-${t.id}`}
+            className={tab === t.id ? 'tab active' : 'tab'}
+            onClick={() => setTab(t.id)}
+          >
+            {t.label}
+            {t.id === 'units' && committed > 0 && <span className="count">{committed}</span>}
+            {t.id === 'airspace' && reservations > 0 && <span className="count">{reservations}</span>}
+          </button>
+        ))}
+      </div>
+
+      <div role="tabpanel" id={`panel-${tab}`} aria-labelledby={`tab-${tab}`}>
+        {tab === 'forecast' && <ForecastTab incident={incident} forecast={forecast} />}
+        {tab === 'units' && <UnitsTab incident={incident} resources={resources} operatorKey={operatorKey} onResult={onResult} />}
+        {tab === 'airspace' && <AirspaceTab incident={incident} reservations={airspace} operatorKey={operatorKey} onResult={onResult} />}
+        {tab === 'log' && <LogTab events={timeline} />}
+      </div>
+    </section>
   );
 }

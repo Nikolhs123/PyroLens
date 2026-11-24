@@ -15,6 +15,18 @@ public sealed class PyroLensDbContext(DbContextOptions<PyroLensDbContext> option
     public DbSet<FireDetection> Detections => Set<FireDetection>();
     public DbSet<Incident> Incidents => Set<Incident>();
     public DbSet<IncidentForecast> Forecasts => Set<IncidentForecast>();
+    public DbSet<IncidentEvent> Events => Set<IncidentEvent>();
+    public DbSet<Resource> Resources => Set<Resource>();
+    public DbSet<AirspaceReservation> Airspace => Set<AirspaceReservation>();
+
+    /// <summary>Database spelling of an enum value: StatusChanged -> "status_changed".</summary>
+    public static string ToSnakeCase<T>(T value) where T : struct, Enum =>
+        string.Concat(value.ToString().Select((c, i) => i > 0 && char.IsUpper(c) ? "_" + char.ToLowerInvariant(c) : char.ToLowerInvariant(c).ToString()));
+
+    public static T FromSnakeCase<T>(string value) where T : struct, Enum => Enum.Parse<T>(value.Replace("_", ""), ignoreCase: true);
+
+    private static ValueConverter<T, string> SnakeCase<T>() where T : struct, Enum =>
+        new(v => ToSnakeCase(v), v => FromSnakeCase<T>(v));
 
     /// <summary>Database spelling of a rating, e.g. VeryHigh -> "very-high".</summary>
     public static string ToDbValue(FireDangerRating rating) => rating switch
@@ -112,6 +124,51 @@ public sealed class PyroLensDbContext(DbContextOptions<PyroLensDbContext> option
             e.Property(x => x.SpreadBearingDegrees).HasColumnName("spread_bearing_deg");
             e.Property(x => x.SpreadArea).HasColumnName("spread_area").HasColumnType("geometry(Polygon,4326)");
             e.Property(x => x.Model).HasColumnName("model");
+        });
+
+        model.Entity<IncidentEvent>(e =>
+        {
+            e.ToTable("incident_events");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).HasColumnName("id").ValueGeneratedOnAdd();
+            e.Property(x => x.IncidentId).HasColumnName("incident_id");
+            e.Property(x => x.OccurredAt).HasColumnName("occurred_at");
+            e.Property(x => x.Type).HasColumnName("type").HasConversion(SnakeCase<IncidentEventType>());
+            e.Property(x => x.Actor).HasColumnName("actor");
+            e.Property(x => x.FromStatus).HasColumnName("from_status").HasConversion(status);
+            e.Property(x => x.ToStatus).HasColumnName("to_status").HasConversion(status);
+            e.Property(x => x.Note).HasColumnName("note");
+            e.Property(x => x.Details).HasColumnName("details").HasColumnType("jsonb");
+        });
+
+        model.Entity<Resource>(e =>
+        {
+            e.ToTable("resources");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).HasColumnName("id");
+            e.Property(x => x.Callsign).HasColumnName("callsign");
+            e.Property(x => x.Kind).HasColumnName("kind").HasConversion(SnakeCase<Core.Resources.ResourceKind>());
+            e.Property(x => x.BaseName).HasColumnName("base_name");
+            e.Property(x => x.BaseLocation).HasColumnName("base_location").HasColumnType("geometry(Point,4326)");
+            e.Property(x => x.Status).HasColumnName("status").HasConversion(SnakeCase<Core.Resources.ResourceStatus>());
+            e.Property(x => x.IncidentId).HasColumnName("incident_id");
+            e.Property(x => x.ReservedUntil).HasColumnName("reserved_until");
+            e.Property(x => x.UpdatedAt).HasColumnName("updated_at");
+        });
+
+        model.Entity<AirspaceReservation>(e =>
+        {
+            e.ToTable("airspace_reservations");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).HasColumnName("id");
+            e.Property(x => x.IncidentId).HasColumnName("incident_id");
+            e.Property(x => x.Level).HasColumnName("level").HasConversion(SnakeCase<Core.Resources.AirspaceLevel>());
+            e.Property(x => x.Area).HasColumnName("area").HasColumnType("geometry(Polygon,4326)");
+            e.Property(x => x.RadiusMeters).HasColumnName("radius_m");
+            e.Property(x => x.During).HasColumnName("during").HasColumnType("tstzrange");
+            e.Property(x => x.ReservedBy).HasColumnName("reserved_by");
+            e.Property(x => x.CreatedAt).HasColumnName("created_at");
+            e.Property(x => x.CancelledAt).HasColumnName("cancelled_at");
         });
     }
 }

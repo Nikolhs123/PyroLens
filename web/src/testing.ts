@@ -1,4 +1,4 @@
-import type { DangerRating, Incident } from './api';
+import type { DangerRating, Incident, IncidentStatus } from './api';
 
 /** An incident for tests; only the fields the UI logic reads matter. */
 export const incident = (
@@ -7,9 +7,10 @@ export const incident = (
   pixels = 1,
   lastSeen = '2026-11-23T10:00:00Z',
   frp: number | null = null,
+  status: IncidentStatus = 'detected',
 ): Incident => ({
   id,
-  status: 'detected',
+  status,
   latitude: 38,
   longitude: 23,
   firstDetectedAt: lastSeen,
@@ -20,4 +21,6 @@ export const incident = (
   forecast: rating
     ? { weatherFrom: lastSeen, dangerRating: rating, peakFfdi: 10, headDistanceMeters: 100, spreadBearingDegrees: 0 }
     : null,
+  nextStatuses: [],
+  acceptsResources: status === 'confirmed' || status === 'active' || status === 'contained',
 });

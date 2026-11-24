@@ -71,7 +71,10 @@ public sealed class ForecastService(
         var deleted = await db.Forecasts.Where(f => f.WeatherFrom < cutoff).ExecuteDeleteAsync(ct);
 
         var incidents = await db.Incidents.AsNoTracking()
-            .Where(i => i.Status != IncidentStatus.Closed && i.LastDetectedAt >= since)
+            // Recently detected, or being worked on by a dispatcher even without new detections.
+            .Where(i => i.Status != IncidentStatus.Closed &&
+                        (i.LastDetectedAt >= since ||
+                         i.Status == IncidentStatus.Confirmed || i.Status == IncidentStatus.Active || i.Status == IncidentStatus.Contained))
             .OrderBy(i => i.Id)
             .Select(i => new { i.Id, Latitude = i.Centroid.Y, Longitude = i.Centroid.X })
             .ToListAsync(ct);

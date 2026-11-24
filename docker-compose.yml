@@ -26,6 +26,8 @@ services:
       dockerfile: src/PyroLens.Api/Dockerfile
     environment:
       ConnectionStrings__PyroLens: Host=db;Port=5432;Database=pyrolens;Username=pyrolens;Password=pyrolens
+      # Local development only: unlocks dispatcher actions in the console. Never reuse it on a public server.
+      Operator__Key: local-operator-key
     ports:
       - "8080:8080"
     depends_on:

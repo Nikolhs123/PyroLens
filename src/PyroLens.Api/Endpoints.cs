@@ -21,6 +21,8 @@ public sealed record ForecastSummaryDto(
     double SpreadBearingDegrees);
 
 /// <param name="Footprint">GeoJSON geometry of the detections' convex hull: a Point, LineString or Polygon.</param>
+/// <param name="NextStatuses">Statuses the incident may move to, from the lifecycle rules, so clients need no copy of them.</param>
+/// <param name="AcceptsResources">Whether units and airspace can be committed in the current status.</param>
 public sealed record IncidentDto(
     long Id,
     IncidentStatus Status,
@@ -31,7 +33,9 @@ public sealed record IncidentDto(
     int DetectionCount,
     double? MaxFrpMegawatts,
     Geometry? Footprint,
-    ForecastSummaryDto? Forecast);
+    ForecastSummaryDto? Forecast,
+    IReadOnlyList<IncidentStatus> NextStatuses,
+    bool AcceptsResources);
 
 public sealed record DetectionDto(
     long Id,
@@ -103,10 +107,14 @@ public static class Endpoints
         return TypedResults.Ok(new StatusDto(
             await db.Detections.MaxAsync(d => (DateTimeOffset?)d.IngestedAt, ct),
             await db.Forecasts.MaxAsync(f => (DateTimeOffset?)f.IssuedAt, ct),
-            await db.Incidents.CountAsync(i => i.Status != IncidentStatus.Closed && i.LastDetectedAt >= since, ct)));
+            await OnBoard(db.Incidents, since).CountAsync(ct)));
     }
 
-    /// <summary>Incidents with a detection in the last <paramref name="hours"/> hours, newest first, with footprint and latest forecast.</summary>
+    /// <summary>
+    /// The board: incidents that are not closed and either were detected in the last <paramref name="hours"/> hours or
+    /// are being worked on (confirmed, active, contained), newest first, with footprint and latest forecast.
+    /// <c>?status=closed</c> lists recently closed incidents instead.
+    /// </summary>
     private static async Task<Results<Ok<List<IncidentDto>>, ValidationProblem>> ListIncidents(
         PyroLensDbContext db, TimeProvider clock, CancellationToken ct, int hours = ActiveHours, IncidentStatus? status = null)
     {
@@ -116,8 +124,10 @@ public static class Endpoints
         }
 
         var since = clock.GetUtcNow().AddHours(-hours);
-        var query = db.Incidents.AsNoTracking().Where(i => i.LastDetectedAt >= since);
-        if (status is { } s)
+        var query = status == IncidentStatus.Closed
+            ? db.Incidents.AsNoTracking().Where(i => i.Status == IncidentStatus.Closed && i.UpdatedAt >= since)
+            : OnBoard(db.Incidents.AsNoTracking(), since);
+        if (status is { } s and not IncidentStatus.Closed)
         {
             query = query.Where(i => i.Status == s);
         }
@@ -269,9 +279,15 @@ public static class Endpoints
             f => new ForecastSummaryDto(f.WeatherFrom, f.DangerRating, f.PeakFfdi, f.HeadDistanceMeters, f.SpreadBearingDegrees));
     }
 
+    /// <summary>Not closed, and recently detected or managed by a dispatcher.</summary>
+    private static IQueryable<Incident> OnBoard(IQueryable<Incident> incidents, DateTimeOffset since) =>
+        incidents.Where(i => i.Status != IncidentStatus.Closed &&
+                             (i.LastDetectedAt >= since ||
+                              i.Status == IncidentStatus.Confirmed || i.Status == IncidentStatus.Active || i.Status == IncidentStatus.Contained));
+
     private static IncidentDto ToDto(Incident i, ForecastSummaryDto? forecast) => new(
         i.Id, i.Status, i.Centroid.Y, i.Centroid.X, i.FirstDetectedAt, i.LastDetectedAt, i.DetectionCount, i.MaxFrpMegawatts,
-        i.Footprint, forecast);
+        i.Footprint, forecast, IncidentLifecycle.NextStatuses(i.Status), IncidentLifecycle.AcceptsResources(i.Status));
 
     private static readonly System.Linq.Expressions.Expression<Func<FireDetection, DetectionDto>> ToDetectionDto = d => new DetectionDto(
         d.Id, d.Source, d.Instrument, d.Latitude, d.Longitude, d.AcquiredAt, d.ConfidenceRaw, d.FrpMegawatts, d.LikelyIndustrial, d.AreaCode, d.IncidentId);

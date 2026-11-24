@@ -1,9 +1,10 @@
 import type { Feature, FeatureCollection, Point } from 'geojson';
 import maplibregl, { type GeoJSONSource, type LngLatBoundsLike, type Map as MapLibreMap } from 'maplibre-gl';
 import { useEffect, useRef, useState } from 'react';
-import type { Detection, Forecast, Incident } from '../api';
+import type { AirspaceReservation, Detection, Forecast, Incident, Resource } from '../api';
 import { bboxOf, padBBox } from '../geo';
 import { ratingStyle } from '../ratings';
+import { AIRSPACE_COLORS } from './AirspaceTab';
 
 /** Free vector tiles, no key: https://openfreemap.org */
 const STYLE_URL = 'https://tiles.openfreemap.org/styles/dark';
@@ -26,10 +27,12 @@ interface Props {
   detections: Detection[] | null;
   selected: Incident | null;
   forecast: Forecast | null;
+  resources: Resource[];
+  airspace: AirspaceReservation[];
   onSelect: (id: number) => void;
 }
 
-export function MapView({ incidents, detections, selected, forecast, onSelect }: Props) {
+export function MapView({ incidents, detections, selected, forecast, resources, airspace, onSelect }: Props) {
   const container = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const onSelectRef = useRef(onSelect);
@@ -148,6 +151,44 @@ export function MapView({ incidents, detections, selected, forecast, onSelect }:
     });
   }, [ready, detections]);
 
+  // Live airspace reservations, all incidents.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!ready || !map) return;
+
+    source(map, 'airspace').setData({
+      type: 'FeatureCollection',
+      features: airspace.map((a) => ({
+        type: 'Feature',
+        geometry: a.area,
+        properties: { color: AIRSPACE_COLORS[a.level], level: a.level },
+      })),
+    });
+  }, [ready, airspace]);
+
+  // Units committed to the selected incident: their base, and a line to the fire.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!ready || !map) return;
+
+    const units = selected ? resources.filter((r) => r.incidentId === selected.id) : [];
+    source(map, 'units').setData({
+      type: 'FeatureCollection',
+      features: units.flatMap((r): Feature[] => [
+        {
+          type: 'Feature',
+          geometry: { type: 'LineString', coordinates: [[r.longitude, r.latitude], [selected!.longitude, selected!.latitude]] },
+          properties: { status: r.status },
+        },
+        {
+          type: 'Feature',
+          geometry: { type: 'Point', coordinates: [r.longitude, r.latitude] },
+          properties: { status: r.status, label: `${r.callsign}${r.status === 'reserved' ? ' (HOLD)' : ''}` },
+        },
+      ]),
+    });
+  }, [ready, resources, selected]);
+
   // Zoom to the selection (and its +3 h area once loaded); back to Greece when cleared.
   const forecastKey = forecast && selected && forecast.incidentId === selected.id ? forecast.issuedAt : null;
   useEffect(() => {
@@ -185,9 +226,23 @@ const source = (map: MapLibreMap, id: string) => map.getSource(id) as GeoJSONSou
  * runs along the burning area and would otherwise be hidden by it.
  */
 function addLayers(map: MapLibreMap) {
-  for (const id of ['forecast', 'footprints', 'pixels', 'incidents']) {
+  for (const id of ['airspace', 'forecast', 'footprints', 'units', 'pixels', 'incidents']) {
     map.addSource(id, { type: 'geojson', data: EMPTY });
   }
+
+  // Airspace first: kilometre-wide circles underneath everything else.
+  map.addLayer({
+    id: 'airspace-fill',
+    type: 'fill',
+    source: 'airspace',
+    paint: { 'fill-color': ['get', 'color'], 'fill-opacity': 0.06 },
+  });
+  map.addLayer({
+    id: 'airspace-line',
+    type: 'line',
+    source: 'airspace',
+    paint: { 'line-color': ['get', 'color'], 'line-width': 1.5, 'line-dasharray': [1, 2], 'line-opacity': 0.9 },
+  });
 
   map.addLayer({
     id: 'forecast-fill',
@@ -221,6 +276,40 @@ function addLayers(map: MapLibreMap) {
     source: 'forecast',
     filter: ['==', ['get', 'horizon'], 1],
     paint: { 'line-color': ['get', 'color'], 'line-width': 2 },
+  });
+  map.addLayer({
+    id: 'units-line',
+    type: 'line',
+    source: 'units',
+    filter: ['==', ['geometry-type'], 'LineString'],
+    paint: {
+      'line-color': SELECTED_COLOR,
+      'line-width': 1.2,
+      'line-opacity': ['case', ['==', ['get', 'status'], 'assigned'], 0.85, 0.45],
+      'line-dasharray': [4, 3],
+    },
+  });
+  map.addLayer({
+    id: 'units-point',
+    type: 'circle',
+    source: 'units',
+    filter: ['==', ['geometry-type'], 'Point'],
+    paint: { 'circle-radius': 4, 'circle-color': SELECTED_COLOR, 'circle-stroke-color': '#0a0e11', 'circle-stroke-width': 1.5 },
+  });
+  map.addLayer({
+    id: 'units-label',
+    type: 'symbol',
+    source: 'units',
+    filter: ['==', ['geometry-type'], 'Point'],
+    layout: {
+      'text-field': ['get', 'label'],
+      'text-font': ['Noto Sans Regular'],
+      'text-size': 11,
+      'text-offset': [0, 1.1],
+      'text-anchor': 'top',
+      'text-allow-overlap': true,
+    },
+    paint: { 'text-color': SELECTED_COLOR, 'text-halo-color': '#0a0e11', 'text-halo-width': 1.5 },
   });
   map.addLayer({
     id: 'pixels',

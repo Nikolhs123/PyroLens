@@ -1,21 +1,27 @@
-import type { Incident } from './api';
+import type { Incident, IncidentStatus } from './api';
 import { ratingStyle } from './ratings';
 
-export type SortKey = 'id' | 'rating' | 'pixels' | 'frp' | 'seen';
+export type SortKey = 'id' | 'status' | 'rating' | 'pixels' | 'frp' | 'seen';
 
 /** Direction a column starts in when first clicked: the most useful end first. */
 export const DEFAULT_DESCENDING: Record<SortKey, boolean> = {
   id: false,
+  status: true,
   rating: true,
   pixels: true,
   frp: true,
   seen: true, // most recently seen first
 };
 
+/** Urgency on the board: fires being fought first, then those waiting for a decision. */
+const STATUS_RANK: Record<IncidentStatus, number> = { active: 4, confirmed: 3, contained: 2, detected: 1, closed: 0 };
+
 const valueOf = (incident: Incident, key: SortKey): number => {
   switch (key) {
     case 'id':
       return incident.id;
+    case 'status':
+      return STATUS_RANK[incident.status];
     case 'rating':
       return ratingStyle(incident).rank;
     case 'pixels':

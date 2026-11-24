@@ -1,10 +1,12 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 export interface Polled<T> {
   data: T | undefined;
   error: string | null;
   /** When the last successful load finished (ms since epoch). */
   updatedAt: number | null;
+  /** Load again now, e.g. right after an action changed the data. */
+  reload: () => void;
 }
 
 /**
@@ -17,9 +19,10 @@ export function usePolling<T>(
   key: string | number | null,
   enabled = true,
 ): Polled<T> {
-  const [state, setState] = useState<Polled<T>>({ data: undefined, error: null, updatedAt: null });
+  const [state, setState] = useState<Omit<Polled<T>, 'reload'>>({ data: undefined, error: null, updatedAt: null });
   const loadRef = useRef(load);
   loadRef.current = load;
+  const runRef = useRef<() => void>(() => {});
 
   useEffect(() => {
     if (!enabled) return;
@@ -36,6 +39,7 @@ export function usePolling<T>(
         setState((s) => ({ ...s, error: (e as Error).message }));
       }
     };
+    runRef.current = () => void run();
 
     // A new key (e.g. another incident) must never show the previous key's data.
     setState({ data: undefined, error: null, updatedAt: null });
@@ -44,8 +48,20 @@ export function usePolling<T>(
     return () => {
       window.clearInterval(timer);
       controller.abort();
+      runRef.current = () => {};
     };
   }, [key, intervalMs, enabled]);
 
-  return state;
+  const reload = useCallback(() => runRef.current(), []);
+  return { ...state, reload };
+}
+
+/** Current time, refreshed every `intervalMs` while mounted (for countdowns and ages). */
+export function useNow(intervalMs = 1000): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), intervalMs);
+    return () => window.clearInterval(timer);
+  }, [intervalMs]);
+  return now;
 }

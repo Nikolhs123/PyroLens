@@ -3,6 +3,7 @@ import type { Incident } from '../api';
 import { compactAge } from '../format';
 import { DEFAULT_DESCENDING, type SortKey, sortIncidents } from '../incidents';
 import { RatingTag } from './RatingTag';
+import { StatusTag } from './StatusTag';
 
 interface Props {
   incidents: Incident[];
@@ -15,6 +16,7 @@ interface Props {
 
 const COLUMNS: { key: SortKey; label: string; title: string; numeric?: boolean }[] = [
   { key: 'id', label: 'ID', title: 'Incident number' },
+  { key: 'status', label: 'ST', title: 'Status: DET detected, CNF confirmed, ACT active, CTN contained' },
   { key: 'rating', label: 'RTG', title: 'Fire danger rating, next 3 h' },
   { key: 'pixels', label: 'PX', title: 'Satellite pixels', numeric: true },
   { key: 'frp', label: 'FRP', title: 'Strongest pixel, fire radiative power (MW)', numeric: true },
@@ -99,6 +101,9 @@ export function IncidentTable({ incidents, selectedId, onToggle, onMove }: Props
                 onClick={() => onToggle(i.id)}
               >
                 <td>#{i.id}</td>
+                <td>
+                  <StatusTag status={i.status} />
+                </td>
                 <td>
                   <RatingTag incident={i} />
                 </td>

@@ -1,10 +1,11 @@
 import type { CSSProperties } from 'react';
 import type { Incident } from '../api';
 import { NO_FORECAST, RATINGS, ratingStyle } from '../ratings';
-import { BURNING_COLOR } from './MapView';
+import { AIRSPACE_COLORS } from './AirspaceTab';
+import { BURNING_COLOR, SELECTED_COLOR } from './MapView';
 
-/** Map key: rating colours always; burning area and spread areas while an incident is open. */
-export function Legend({ selected }: { selected: Incident | null }) {
+/** Map key: rating colours always; burning area, spread areas, units and airspace while an incident is open. */
+export function Legend({ selected, showAirspace }: { selected: Incident | null; showAirspace: boolean }) {
   const keyColors = {
     '--key-forecast': selected ? ratingStyle(selected).color : BURNING_COLOR,
     '--key-now': BURNING_COLOR,
@@ -30,6 +31,19 @@ export function Legend({ selected }: { selected: Incident | null }) {
           </span>
           <span>
             <i className="key key-3h" /> +3H
+          </span>
+          <span>
+            <i className="dot" style={{ background: SELECTED_COLOR }} /> UNIT
+          </span>
+        </div>
+      )}
+      {showAirspace && (
+        <div className="legend-row">
+          <span>
+            <i className="ring" style={{ borderColor: AIRSPACE_COLORS.low }} /> AIR LOW
+          </span>
+          <span>
+            <i className="ring" style={{ borderColor: AIRSPACE_COLORS.high }} /> AIR HIGH
           </span>
         </div>
       )}

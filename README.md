@@ -66,6 +66,30 @@ The first live forecast run covered all 57 incidents (114 forecasts) in one cycl
 > The spread estimate is **simplified and indicative**. It ignores terrain, real vegetation maps, firebreaks and firefighting,
 > and uses a fixed drought factor and fuel load. The API says so in every response.
 
+### Phase 3: dispatch (lifecycle, units, airspace)
+
+Every guarantee below is enforced by PostgreSQL, not by checks in application code that a race could slip past.
+
+- 🔄 **Incident lifecycle**: *Detected → Confirmed → Active → Contained → Closed*, plus false alarms (Detected → Closed)
+  and flare-ups (Contained → Active), in one state machine. A change is one `UPDATE … WHERE status = <what the
+  dispatcher saw>`: if someone moved the incident first, it updates nothing and the API answers **409 Conflict** with the
+  current status. Closing releases every unit and cancels every airspace reservation of the incident.
+- 📜 **Append-only timeline**: every action lands in `incident_events` with actor, note and details (JSONB). A trigger
+  rejects `UPDATE` and `DELETE`, so the log cannot be rewritten.
+- 🚒 **Units** (simulated fleet at real Greek bases: aircraft, helicopters, drones, engines, crews): suggestions by ETA
+  (straight line for aircraft, ×1.3 by road), then **reserve** (a 5-minute hold) → **assign** → **release**. Each step is a
+  single conditional `UPDATE`; the incident row is locked `FOR SHARE` so a unit can never be committed to an incident
+  that is closing at the same moment. A `CHECK` constraint ties every status to exactly the columns it needs.
+- ✈️ **Airspace**: reserve a circle and a time window around a fire, at **low** level (drones) or **high** (aircraft).
+  An **exclusion constraint** — `EXCLUDE USING gist (level WITH =, area WITH &&, during WITH &&) WHERE (cancelled_at IS NULL)`
+  on a `tstzrange` — makes overlapping reservations impossible; the API turns the violation (`23P01`) into a 409 that
+  names the reservation in the way.
+- 🔐 **Operator key**: reads are public; dispatcher actions need the `X-Operator-Key` header (constant-time comparison)
+  and are rate-limited to 30 a minute per client. Without a configured key the server is read-only.
+
+Measured in the integration tests: **20 concurrent reservations of one aircraft → exactly 1 succeeds, 19 get 409**;
+**10 concurrent overlapping airspace requests → exactly 1 succeeds**.
+
 ### Operations console
 
 A React + TypeScript app (Vite, MapLibre GL, OpenFreeMap dark vector tiles, IBM Plex), built into the API image
@@ -75,11 +99,15 @@ and served at `/`. It is laid out like a dispatch screen rather than a website:
   and red when the scheduled jobs fall behind, active incident count and API link state.
 - **Incident table**: ID, danger band (`LM` `H` `VH` `S` `E` `C`), satellite pixels, strongest pixel (MW) and time
   since last seen; sortable by every column, driven from the keyboard (`↑` `↓` select, `Esc` clear, `P` pixel layer).
-- **Detail panel**: first/last seen in UTC, fire danger index and band, wind with a direction arrow, temperature,
-  humidity, and head run, rate of spread and direction for +1 h and +3 h, with the model's disclaimer.
+- **Detail panel**: status with the allowed next steps, then four tabs. *Forecast*: fire danger index and band, wind
+  arrow, temperature, humidity, head run, rate of spread and direction for +1 h and +3 h. *Units*: committed units with a
+  live hold countdown, and the nearest free units by ETA. *Airspace*: reservations and a form for new ones. *Log*: the
+  timeline. Conflicts come back as the server's own sentence, e.g. "High (aircraft) airspace there is already reserved
+  23:07–01:07 UTC by reservation 1".
+- **Operator mode**: `READ-ONLY` in the status strip until the operator key is entered (kept for the browser tab only).
 - **Map**: markers coloured by danger band and sized by pixels; the selected incident's burning area, +1 h area and
-  dashed +3 h outline; optional raw pixels of the last 24 h. Refreshes every minute; on phones the map sits above
-  the table.
+  dashed +3 h outline, its units with lines from their bases; airspace circles (cyan low, violet high); optional raw
+  pixels of the last 24 h. Refreshes every minute (units and airspace every 15 s); on phones the map sits above the table.
 
 ## Architecture
 
@@ -171,11 +199,24 @@ npm run dev
 | Endpoint | Description |
 |---|---|
 | `GET /api/status` | When satellite data and forecasts last arrived, and how many incidents are active |
-| `GET /api/incidents?hours=48&status=detected` | Incidents with a detection in the last N hours, newest first, with footprint (GeoJSON) and latest danger rating |
+| `GET /api/incidents?hours=48&status=detected` | The board: incidents not closed that were detected in the last N hours or are being worked on, with footprint (GeoJSON), latest danger rating and allowed next statuses |
 | `GET /api/incidents/{id}` | One incident with its detections |
 | `GET /api/incidents/{id}/forecast` | Latest +1 h and +3 h forecast: weather, danger index and rating, spread rate, spread area as GeoJSON |
+| `GET /api/incidents/{id}/events` | The incident's timeline |
+| `GET /api/incidents/{id}/resources/suggestions?limit=6` | Free units by ETA, with distance |
+| `GET /api/resources` · `GET /api/airspace?incidentId=` | The fleet with its state; live airspace reservations (GeoJSON areas) |
 | `GET /api/detections?hours=24&modisConfidenceAbove=70&viirsConfidence=nominal,high&includeIndustrial=false&includeOutsideArea=false` | Raw detections with a per-request confidence filter; outside Greece hidden by default |
 | `GET /health/live` · `GET /health/ready` | Liveness; readiness including PostgreSQL |
+
+Dispatcher actions (header `X-Operator-Key`; 401 without it, 403 when the server is read-only, 429 above 30 a minute):
+
+| Endpoint | Body | Outcomes |
+|---|---|---|
+| `POST /api/incidents/{id}/status` | `{ "from": "detected", "to": "confirmed", "note": "…" }` | 200 · 409 status changed meanwhile · 422 not an allowed transition |
+| `POST /api/resources/{id}/reserve` | `{ "incidentId": 38 }` | 200 (5-minute hold) · 409 taken · 422 incident not confirmed |
+| `POST /api/resources/{id}/assign` · `/release` | `{ "incidentId": 38 }` | 200 · 409 hold expired or not this incident's |
+| `POST /api/incidents/{id}/airspace` | `{ "level": "high", "radiusMeters": 3000, "durationMinutes": 120 }` | 200 · 409 overlaps a reservation (named) · 422 invalid window |
+| `DELETE /api/airspace/{id}` | – | 200 · 409 already cancelled |
 
 <details>
 <summary>Example response</summary>
@@ -199,10 +240,16 @@ npm run dev
 ## Testing
 
 ```bash
-dotnet test tests/PyroLens.UnitTests          # parsers, fire danger and spread math, no dependencies
+dotnet test tests/PyroLens.UnitTests          # parsers, fire danger and spread math, lifecycle rules, ETAs
 dotnet test tests/PyroLens.IntegrationTests   # real SQL on postgis/postgis via Testcontainers (needs Docker)
-cd web && npm test                            # map helpers: sorting by danger, rating counts, compass, distances, times
+cd web && npm test                            # console logic: sorting, rating counts, countdowns, log lines, times
 ```
+
+**Phase 3 integration tests** run against PostGIS with a controllable clock: status changes and their timeline; a stale
+change gets 409; the timeline refuses `UPDATE` and `DELETE` (`restrict_violation`); reserve → assign → release; a hold
+blocks other incidents until it expires; **20 parallel reservations of one aircraft, exactly one winner**; suggestions in
+ETA order; overlapping airspace refused by the exclusion constraint, other band and adjacent windows allowed;
+**10 parallel overlapping airspace requests, exactly one winner**; closing an incident releases its units and airspace.
 
 The unit tests check the FFDI equation and rating bands, spread rate, ellipse shape and orientation (a north wind pushes
 the fire south, the width is length / LB, a turning wind bends the direction) and both parsers on real responses.
@@ -219,9 +266,10 @@ builds the map, and builds both Docker images.
 - [x] **Map**: React + TypeScript dispatcher map with incidents, danger ratings and spread areas
 - [ ] **Live push**: SignalR instead of polling, driven by PostgreSQL `LISTEN/NOTIFY` from the worker
 - [ ] **Better forecast inputs**: rainfall-based drought factor, EFFIS Fire Weather Index, a fire danger map for all of Greece
-- [ ] **Incident lifecycle**: state machine from *Detected* to *Closed*, timeline, escalation rules, audit log
-- [ ] **Resources**: crews, tankers, aircraft and drones with atomic assignment (`409 Conflict` on races)
-- [ ] **Airspace**: zone and time-window reservations enforced by a PostgreSQL exclusion constraint on `tstzrange`
+- [x] **Incident lifecycle**: state machine from *Detected* to *Closed*, append-only timeline, optimistic 409 on races
+- [x] **Resources**: simulated fleet, suggestions by ETA, expiring reservations and atomic assignment (`409 Conflict` on races)
+- [x] **Airspace**: zone and time-window reservations enforced by a PostgreSQL exclusion constraint on `tstzrange`
+- [ ] **Escalation rules**: flag incidents that grow, worsen in danger band or have no units after N minutes
 - [ ] **LLM assistant**: incident summaries and draft announcements with structured output, fallback and human approval
 - [ ] **Citizens**: public map served from cache, report form, radius-based alerts through a queue with dead-lettering
 - [ ] **Scale**: k6 load tests (telemetry ingest, public map peak, resource races, airspace overlap) with before/after numbers
