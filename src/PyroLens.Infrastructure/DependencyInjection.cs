@@ -24,7 +24,9 @@ public static class DependencyInjection
 
         var connectionString = ConnectionStrings.Normalize(
             configuration.GetConnectionString(ConnectionStringName)
-            ?? throw new InvalidOperationException($"Connection string '{ConnectionStringName}' is missing."));
+            ?? throw new InvalidOperationException(
+                $"Connection string '{ConnectionStringName}' is missing. Set it in appsettings or with the " +
+                $"environment variable ConnectionStrings__{ConnectionStringName} (a Npgsql connection string or a postgresql:// URL)."));
 
         var database = configuration.GetSection(DatabaseOptions.Section).Get<DatabaseOptions>() ?? new DatabaseOptions();
         services.AddDbContext<PyroLensDbContext>(o => o.UseNpgsql(connectionString, npgsql =>
