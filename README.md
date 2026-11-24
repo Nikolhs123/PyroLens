@@ -27,7 +27,7 @@ and (on the roadmap) helps a dispatcher coordinate resources, airspace and publi
 ---
 
 <p align="center">
-  <img src="docs/map-incident.jpg" alt="PyroLens map: incident #38 near Feres, Evros, with its danger rating, wind and +1 h / +3 h spread areas" width="800">
+  <img src="docs/console.jpg" alt="PyroLens operations console: incident table, incident 35 with fire danger index 3.2, wind from the east, and its burning area with +1 h and +3 h spread outlines on a dark map" width="800">
 </p>
 
 ## The problem
@@ -66,20 +66,20 @@ The first live forecast run covered all 57 incidents (114 forecasts) in one cycl
 > The spread estimate is **simplified and indicative**. It ignores terrain, real vegetation maps, firebreaks and firefighting,
 > and uses a fixed drought factor and fuel load. The API says so in every response.
 
-### Map
+### Operations console
 
-A React + TypeScript app (Vite, Leaflet, OpenStreetMap tiles), built into the API image and served at `/`.
+A React + TypeScript app (Vite, MapLibre GL, OpenFreeMap dark vector tiles, IBM Plex), built into the API image
+and served at `/`. It is laid out like a dispatch screen rather than a website:
 
-- Every active incident as a marker coloured by its +3 h danger rating, sized by its number of satellite pixels.
-- A list sorted by danger, then size, then recency, with a count per rating.
-- Selecting an incident zooms to it and shows where it is burning now, where it could be within 1 h and 3 h,
-  the wind (with an arrow), temperature, humidity, spread speed and direction, and the disclaimer.
-- An optional layer with the raw satellite pixels of the last 24 h.
-- Refreshes every minute and says how fresh the satellite data is; works on phones (map above, list below).
-
-<p align="center">
-  <img src="docs/map-overview.jpg" alt="PyroLens overview: 57 incidents across Greece, all rated low–moderate" width="640">
-</p>
+- **Status strip**: UTC clock, age of the latest satellite data (`FIRMS`) and weather forecasts (`WX`), turning amber
+  and red when the scheduled jobs fall behind, active incident count and API link state.
+- **Incident table**: ID, danger band (`LM` `H` `VH` `S` `E` `C`), satellite pixels, strongest pixel (MW) and time
+  since last seen; sortable by every column, driven from the keyboard (`↑` `↓` select, `Esc` clear, `P` pixel layer).
+- **Detail panel**: first/last seen in UTC, fire danger index and band, wind with a direction arrow, temperature,
+  humidity, and head run, rate of spread and direction for +1 h and +3 h, with the model's disclaimer.
+- **Map**: markers coloured by danger band and sized by pixels; the selected incident's burning area, +1 h area and
+  dashed +3 h outline; optional raw pixels of the last 24 h. Refreshes every minute; on phones the map sits above
+  the table.
 
 ## Architecture
 
@@ -113,7 +113,7 @@ flowchart LR
 | `PyroLens.Infrastructure` | Schema and migrations, FIRMS and Open-Meteo clients, batch writer, clustering, forecasts |
 | `PyroLens.Worker` | Two background loops: ingestion every 10 min, forecasts every 30 min |
 | `PyroLens.Api` | REST endpoints (geometries as GeoJSON), health checks, serves the map |
-| `web/` | React + TypeScript map (Vite, Leaflet), with Vitest tests |
+| `web/` | React + TypeScript operations console (Vite, MapLibre GL), with Vitest tests |
 
 <details>
 <summary><b>How clustering works</b></summary>
@@ -282,7 +282,7 @@ from the Natural Earth file; see the script for the steps.
 | [Open-Meteo](https://open-meteo.com/) | Hourly temperature, humidity, wind | Free, no key, non-commercial use, fewer than 10,000 calls a day, CC BY 4.0 attribution. 57 incidents every 30 min is about 2,700 locations a day |
 | [CSIRO Spark model library](https://research.csiro.au/spark/resources/model-library/mcarthur) | McArthur Mk5 equations, length-to-breadth ratio, ellipse geometry | Published reference implementation |
 | EFFIS *(roadmap)* | Fire Weather Index | EFFIS terms of use |
-| [OpenStreetMap](https://www.openstreetmap.org/copyright) | Map tiles | © OpenStreetMap contributors (ODbL). The public tile servers follow a [usage policy](https://operations.osmfoundation.org/policies/tiles/): fine for a demo, a hosted deployment with real traffic needs its own or a commercial tile provider |
+| [OpenFreeMap](https://openfreemap.org) | Dark vector map tiles | Free, no key, no usage limits; provided as-is. Map data © [OpenMapTiles](https://openmaptiles.org), © [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors (ODbL) |
 
 Terms and limits change; check each provider before deploying.
 

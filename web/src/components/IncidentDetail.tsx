@@ -1,11 +1,12 @@
 import type { CSSProperties } from 'react';
 import type { Forecast, Incident } from '../api';
-import { clockTime, compass, formatCoordinates, formatDistance, relativeTime } from '../format';
-import { RATINGS } from '../ratings';
-import { RatingPill } from './RatingPill';
+import { compass, formatCoordinates, formatDistance, utcStamp } from '../format';
+import { ratingStyle } from '../ratings';
+import { RatingTag } from './RatingTag';
 
 interface Props {
   incident: Incident;
+  /** undefined while loading, null when there is none yet. */
   forecast: Forecast | null | undefined;
   onClose: () => void;
 }
@@ -15,106 +16,115 @@ export function IncidentDetail({ incident, forecast, onClose }: Props) {
   const weather = forecast?.horizons.find((h) => h.horizonHours === 1)?.weather;
 
   return (
-    <article className="detail" aria-labelledby="detail-title">
-      <button type="button" className="back" onClick={onClose}>
-        ← All incidents
-      </button>
-
-      <header className="detail-header">
-        <h2 id="detail-title">Incident #{incident.id}</h2>
-        <p className="muted">{formatCoordinates(incident.latitude, incident.longitude)}</p>
+    <section className="detail" aria-labelledby="detail-title">
+      <header className="detail-head">
+        <h2 id="detail-title">INC {incident.id}</h2>
+        <span className="coords">{formatCoordinates(incident.latitude, incident.longitude)}</span>
+        <button type="button" className="close" onClick={onClose} title="Close (Esc)" aria-label="Close incident">
+          ✕
+        </button>
       </header>
 
-      <dl className="facts">
+      <dl className="kv">
         <div>
-          <dt>Pixels</dt>
+          <dt>PIXELS</dt>
           <dd>{incident.detectionCount}</dd>
         </div>
         <div>
-          <dt>Strongest pixel</dt>
+          <dt>MAX FRP</dt>
           <dd>{incident.maxFrpMegawatts != null ? `${incident.maxFrpMegawatts.toFixed(1)} MW` : '–'}</dd>
         </div>
         <div>
-          <dt>First seen</dt>
-          <dd>{relativeTime(incident.firstDetectedAt)}</dd>
+          <dt>FIRST SEEN</dt>
+          <dd>{utcStamp(incident.firstDetectedAt)}</dd>
         </div>
         <div>
-          <dt>Last seen</dt>
-          <dd>{relativeTime(incident.lastDetectedAt)}</dd>
+          <dt>LAST SEEN</dt>
+          <dd>{utcStamp(incident.lastDetectedAt)}</dd>
         </div>
       </dl>
 
-      <section className="forecast" aria-labelledby="forecast-title">
-        <h3 id="forecast-title">Spread forecast</h3>
+      <h3 className="rule">
+        <span>SPREAD FORECAST</span>
+        {forecast && <span className="dim">WX {utcStamp(forecast.weatherFrom)}</span>}
+      </h3>
 
-        {forecast === undefined && <p className="muted">Loading forecast…</p>}
-        {forecast === null && (
-          <p className="muted">No forecast yet. Forecasts run every 30 minutes for incidents seen in the last 24 hours.</p>
-        )}
+      {forecast === undefined && <p className="dim">Loading forecast…</p>}
+      {forecast === null && <p className="dim">No forecast yet. Forecasts run every 30 min for incidents seen in the last 24 h.</p>}
 
-        {forecast && threeHours && weather && (
-          <>
-            <div className="danger">
-              <RatingPill rating={threeHours.dangerRating} />
-              <span>
-                Fire danger index <strong>{threeHours.peakFfdi.toFixed(1)}</strong>
-              </span>
-            </div>
+      {forecast && threeHours && weather && (
+        <>
+          <div className="danger">
+            <span className="ffdi">{threeHours.peakFfdi.toFixed(1)}</span>
+            <span className="ffdi-label">
+              FFDI
+              <RatingTag rating={threeHours.dangerRating} long />
+            </span>
+          </div>
 
-            <div className="weather">
-              <WindArrow towardsDegrees={weather.meanWindFromDegrees + 180} />
-              <p>
-                Wind <strong>{Math.round(weather.meanWindSpeedKmh)} km/h</strong> from {compass(weather.meanWindFromDegrees)}
-                {weather.maxWindGustKmh != null && <>, gusts {Math.round(weather.maxWindGustKmh)}</>}
-                <br />
-                {Math.round(weather.meanTemperatureC)} °C · humidity {Math.round(weather.meanRelativeHumidityPercent)} %
-              </p>
-            </div>
+          <div className="wind">
+            <WindArrow towardsDegrees={weather.meanWindFromDegrees + 180} />
+            <dl className="kv kv-inline">
+              <div>
+                <dt>WIND</dt>
+                <dd>
+                  {compass(weather.meanWindFromDegrees)} {Math.round(weather.meanWindSpeedKmh)}
+                  {weather.maxWindGustKmh != null && <span className="dim"> G{Math.round(weather.maxWindGustKmh)}</span>} km/h
+                </dd>
+              </div>
+              <div>
+                <dt>TEMP</dt>
+                <dd>{Math.round(weather.meanTemperatureC)} °C</dd>
+              </div>
+              <div>
+                <dt>RH</dt>
+                <dd>{Math.round(weather.meanRelativeHumidityPercent)} %</dd>
+              </div>
+            </dl>
+          </div>
 
-            <table className="horizons" style={{ '--key-forecast': RATINGS[threeHours.dangerRating].color } as CSSProperties}>
-              <thead>
-                <tr>
-                  <th scope="col">Within</th>
-                  <th scope="col">Head run</th>
-                  <th scope="col">Speed</th>
-                  <th scope="col">Towards</th>
+          {/* Same colour as the spread areas on the map. */}
+          <table className="horizons" style={{ '--key-forecast': ratingStyle(incident).color } as CSSProperties}>
+            <thead>
+              <tr>
+                <th scope="col">WITHIN</th>
+                <th scope="col" className="num">HEAD RUN</th>
+                <th scope="col" className="num">ROS</th>
+                <th scope="col" className="num">TOWARDS</th>
+              </tr>
+            </thead>
+            <tbody>
+              {forecast.horizons.map((h) => (
+                <tr key={h.horizonHours}>
+                  <th scope="row">
+                    <span className={h.horizonHours === 1 ? 'key key-1h' : 'key key-3h'} aria-hidden="true" />+{h.horizonHours}H
+                  </th>
+                  <td className="num">{formatDistance(h.headDistanceMeters)}</td>
+                  <td className="num">{Math.round(h.peakRateOfSpreadMetersPerHour)} m/h</td>
+                  <td className="num">{compass(h.spreadBearingDegrees)}</td>
                 </tr>
-              </thead>
-              <tbody>
-                {forecast.horizons.map((h) => (
-                  <tr key={h.horizonHours}>
-                    <th scope="row">
-                      <span className={h.horizonHours === 1 ? 'key key-1h' : 'key key-3h'} aria-hidden="true" />
-                      {h.horizonHours} h
-                    </th>
-                    <td>{formatDistance(h.headDistanceMeters)}</td>
-                    <td>{Math.round(h.peakRateOfSpreadMetersPerHour)} m/h</td>
-                    <td>{compass(h.spreadBearingDegrees)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+              ))}
+            </tbody>
+          </table>
 
-            <p className="fine">
-              Weather from {clockTime(forecast.weatherFrom)}, computed {relativeTime(forecast.issuedAt)}. Drought factor{' '}
-              {forecast.droughtFactor}, fuel load {forecast.fuelLoadTonnesPerHectare} t/ha.
-            </p>
-            <p className="disclaimer">{forecast.disclaimer}</p>
-          </>
-        )}
-      </section>
-    </article>
+          <p className="fine">
+            {forecast.disclaimer} Drought factor {forecast.droughtFactor}, fuel load {forecast.fuelLoadTonnesPerHectare} t/ha.
+          </p>
+        </>
+      )}
+    </section>
   );
 }
 
-/** Arrow pointing where the wind blows to. */
+/** Points where the wind blows to. */
 function WindArrow({ towardsDegrees }: { towardsDegrees: number }) {
   return (
     <svg className="wind-arrow" viewBox="0 0 40 40" role="img" aria-label={`Wind blowing towards ${compass(towardsDegrees)}`}>
       <circle cx="20" cy="20" r="18" />
+      <line x1="20" y1="2" x2="20" y2="6" className="tick" />
       <g transform={`rotate(${towardsDegrees} 20 20)`}>
         <line x1="20" y1="31" x2="20" y2="11" />
-        <polygon points="20,6 14.5,14 25.5,14" />
+        <polygon points="20,6 15,14 25,14" />
       </g>
     </svg>
   );

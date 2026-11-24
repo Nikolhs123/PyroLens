@@ -1,5 +1,26 @@
 import { describe, expect, it } from 'vitest';
-import { compass, formatCoordinates, formatDistance, relativeTime } from './format';
+import { compactAge, compass, formatCoordinates, formatDistance, relativeTime, utcClock, utcStamp } from './format';
+
+describe('compactAge', () => {
+  const now = Date.parse('2026-11-24T22:30:00Z');
+
+  it.each([
+    ['2026-11-24T22:29:40Z', '<1m'],
+    ['2026-11-24T22:12:00Z', '18m'],
+    ['2026-11-24T11:00:00Z', '11h'],
+    ['2026-11-22T22:30:00Z', '2d'],
+  ])('%s is %s', (iso, text) => {
+    expect(compactAge(iso, now)).toBe(text);
+  });
+});
+
+describe('UTC formatting', () => {
+  it('shows the clock and stamps in UTC, whatever the browser time zone', () => {
+    expect(utcClock(new Date('2026-11-24T22:31:04Z'))).toBe('22:31:04');
+    expect(utcStamp('2026-11-24T22:05:02.82+00:00')).toBe('24 Nov 22:05Z');
+    expect(utcStamp('2026-01-03T00:00:00+02:00')).toBe('2 Jan 22:00Z');
+  });
+});
 
 describe('compass', () => {
   it.each([

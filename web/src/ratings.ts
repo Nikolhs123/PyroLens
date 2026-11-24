@@ -2,38 +2,29 @@ import type { DangerRating, Incident } from './api';
 
 export interface RatingStyle {
   label: string;
-  /** Literal colours: Leaflet writes them into SVG attributes, where CSS variables do not resolve. */
+  /** Short code for dense tables, as on a dispatch board. */
+  code: string;
+  /** Literal colours: MapLibre paints them in WebGL, where CSS variables do not exist. */
   color: string;
-  text: string;
   rank: number;
 }
 
-/** McArthur bands, coloured from calm to critical. */
+/** McArthur bands, from calm to critical, tuned to read on a dark map. */
 export const RATINGS: Record<DangerRating, RatingStyle> = {
-  lowModerate: { label: 'Low–moderate', color: '#2e8b6a', text: '#ffffff', rank: 1 },
-  high: { label: 'High', color: '#c79a00', text: '#1d1600', rank: 2 },
-  veryHigh: { label: 'Very high', color: '#e2700b', text: '#ffffff', rank: 3 },
-  severe: { label: 'Severe', color: '#cf3417', text: '#ffffff', rank: 4 },
-  extreme: { label: 'Extreme', color: '#94171b', text: '#ffffff', rank: 5 },
-  catastrophic: { label: 'Catastrophic', color: '#3d0b18', text: '#ffffff', rank: 6 },
+  lowModerate: { label: 'Low–moderate', code: 'LM', color: '#4caf7d', rank: 1 },
+  high: { label: 'High', code: 'H', color: '#d6c13c', rank: 2 },
+  veryHigh: { label: 'Very high', code: 'VH', color: '#f28c28', rank: 3 },
+  severe: { label: 'Severe', code: 'S', color: '#ea4f2f', rank: 4 },
+  extreme: { label: 'Extreme', code: 'E', color: '#c8173a', rank: 5 },
+  catastrophic: { label: 'Catastrophic', code: 'C', color: '#ff3ea5', rank: 6 },
 };
 
-export const NO_FORECAST: RatingStyle = { label: 'No forecast yet', color: '#7b6f6a', text: '#ffffff', rank: 0 };
+export const NO_FORECAST: RatingStyle = { label: 'No forecast yet', code: '–', color: '#5d6b72', rank: 0 };
 
 export const ratingStyle = (incident: Incident): RatingStyle =>
   incident.forecast ? RATINGS[incident.forecast.dangerRating] : NO_FORECAST;
 
-/** Most dangerous first; then larger fires; then most recently seen. */
-export function sortIncidents(incidents: Incident[]): Incident[] {
-  return [...incidents].sort(
-    (a, b) =>
-      ratingStyle(b).rank - ratingStyle(a).rank ||
-      b.detectionCount - a.detectionCount ||
-      Date.parse(b.lastDetectedAt) - Date.parse(a.lastDetectedAt),
-  );
-}
-
-/** How many incidents fall in each rating, in band order, skipping empty bands. */
+/** How many incidents fall in each rating, most dangerous first, skipping empty bands. */
 export function countByRating(incidents: Incident[]): { style: RatingStyle; count: number }[] {
   const styles = [...Object.values(RATINGS), NO_FORECAST].sort((a, b) => b.rank - a.rank);
   return styles
