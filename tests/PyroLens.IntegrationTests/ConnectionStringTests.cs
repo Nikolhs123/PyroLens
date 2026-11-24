@@ -43,6 +43,17 @@ public sealed class ConnectionStringTests
         Assert.Equal("pyrolens", result.ApplicationName);
     }
 
+    [Theory]
+    [InlineData("0123456789abcdef0123456789abcdef")] // e.g. a password or key pasted on its own
+    [InlineData("Database=pyrolens;Username=pyrolens")] // no host
+    public void Malformed_values_are_rejected_without_echoing_them(string value)
+    {
+        var ex = Assert.Throws<FormatException>(() => ConnectionStrings.Normalize(value));
+
+        Assert.DoesNotContain(value, ex.Message);
+        Assert.Contains("postgresql://", ex.Message);
+    }
+
     [Fact]
     public void Unknown_sslmode_is_rejected()
     {

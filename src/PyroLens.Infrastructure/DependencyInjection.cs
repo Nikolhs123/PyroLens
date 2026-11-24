@@ -22,14 +22,16 @@ public static class DependencyInjection
             return services;
         }
 
-        var connectionString = ConnectionStrings.Normalize(
-            configuration.GetConnectionString(ConnectionStringName)
+        var rawConnectionString = configuration.GetConnectionString(ConnectionStringName)
             ?? throw new InvalidOperationException(
                 $"Connection string '{ConnectionStringName}' is missing. Set it in appsettings or with the " +
-                $"environment variable ConnectionStrings__{ConnectionStringName} (a Npgsql connection string or a postgresql:// URL)."));
+                $"environment variable ConnectionStrings__{ConnectionStringName} (a Npgsql connection string or a postgresql:// URL).");
 
         var database = configuration.GetSection(DatabaseOptions.Section).Get<DatabaseOptions>() ?? new DatabaseOptions();
-        services.AddDbContext<PyroLensDbContext>(o => o.UseNpgsql(connectionString, npgsql =>
+
+        // Normalized when the database is first used, not here: a malformed value then shows up as a clear
+        // error in the logs and /health/ready while the API keeps serving the map.
+        services.AddDbContext<PyroLensDbContext>(o => o.UseNpgsql(ConnectionStrings.Normalize(rawConnectionString), npgsql =>
         {
             npgsql.UseNetTopologySuite();
             if (database.UseEntraId)

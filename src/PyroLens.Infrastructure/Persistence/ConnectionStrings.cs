@@ -17,7 +17,23 @@ public static class ConnectionStrings
         if (!value.StartsWith("postgres://", StringComparison.OrdinalIgnoreCase) &&
             !value.StartsWith("postgresql://", StringComparison.OrdinalIgnoreCase))
         {
-            return value;
+            try
+            {
+                if (!string.IsNullOrWhiteSpace(new NpgsqlConnectionStringBuilder(value).Host))
+                {
+                    return value;
+                }
+            }
+            catch (ArgumentException)
+            {
+                // Not "key=value;…" at all; reported below.
+            }
+
+            // Never include the value: it may be a password pasted into the wrong field.
+            throw new FormatException(
+                "The database connection string is not valid. Expected a URL such as " +
+                "postgresql://user:password@host:5432/database or a connection string such as " +
+                "Host=…;Database=…;Username=…;Password=….");
         }
 
         var uri = new Uri(value);
