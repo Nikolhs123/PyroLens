@@ -15,12 +15,11 @@ builder.Services.ConfigureHttpJsonOptions(o =>
     o.SerializerOptions.Converters.Add(new GeoJsonConverterFactory());
 });
 builder.Services.AddProblemDetails();
+builder.Services.AddHostedService<DatabaseMigrationService>();
 builder.Services.AddHealthChecks()
     .AddCheck<DatabaseHealthCheck>("postgres", tags: ["ready"]);
 
 var app = builder.Build();
-
-await app.Services.MigrateDatabaseAsync();
 
 app.UseExceptionHandler();
 app.UseStatusCodePages();
