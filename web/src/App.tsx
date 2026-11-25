@@ -1,19 +1,18 @@
-import { type CSSProperties, useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { api } from './api';
-import { IncidentDetail } from './components/IncidentDetail';
-import { IncidentTable } from './components/IncidentTable';
+import { FireDetail } from './components/FireDetail';
+import { FireList } from './components/FireList';
 import { Legend } from './components/Legend';
 import { MapView } from './components/MapView';
-import { RatingTag } from './components/RatingTag';
-import { StatusBar } from './components/StatusBar';
-import { countByRating, ratingStyle } from './ratings';
+import { SidebarHeader } from './components/SidebarHeader';
+import { type Theme, applyTheme, initialTheme } from './theme';
 import { usePolling } from './usePolling';
 
 const REFRESH_MS = 60_000;
 const OPS_REFRESH_MS = 15_000;
 const KEY_STORAGE = 'pyrolens.operatorKey';
 
-// sessionStorage can be unavailable (private mode, blocked storage); the console works without it.
+// sessionStorage can be unavailable (private mode, blocked storage); the app works without it.
 const readKey = () => {
   try {
     return sessionStorage.getItem(KEY_STORAGE);
@@ -34,6 +33,9 @@ export function App() {
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [showPixels, setShowPixels] = useState(false);
   const [operatorKey, setOperatorKey] = useState<string | null>(readKey);
+  const [theme, setTheme] = useState<Theme>(initialTheme);
+
+  useEffect(() => applyTheme(theme), [theme]);
 
   const incidents = usePolling((s) => api.incidents(s), REFRESH_MS, 'incidents');
   const status = usePolling((s) => api.status(s), REFRESH_MS, 'status');
@@ -45,7 +47,7 @@ export function App() {
 
   const list = incidents.data ?? [];
   const selected = list.find((i) => i.id === selectedId) ?? null;
-  // undefined = still loading, null = none yet (or the request failed), otherwise this incident's forecast.
+  // undefined = still loading, null = none yet (or the request failed), otherwise this fire's forecast.
   const selectedForecast = forecast.error != null ? null : forecast.data;
 
   const toggle = useCallback((id: number) => setSelectedId((current) => (current === id ? null : id)), []);
@@ -67,7 +69,7 @@ export function App() {
     timeline.reload();
   };
 
-  // Esc clears the selection; P toggles the pixel layer (outside form fields).
+  // Esc goes back to the list; P toggles the pixel layer (outside form fields).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
@@ -79,81 +81,42 @@ export function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
-  const counts = countByRating(list);
   const liveAirspace = airspace.data ?? [];
 
   return (
     <div className="app">
-      <StatusBar
-        status={status.data ?? undefined}
-        offline={incidents.error != null}
-        active={list.length}
-        operatorKey={operatorKey}
-        onUnlock={unlock}
-        onLock={lock}
-      />
+      <aside className="sidebar" aria-label="Fires">
+        <SidebarHeader
+          status={status.data ?? undefined}
+          offline={incidents.error != null && list.length === 0}
+          fires={list.length}
+          theme={theme}
+          onToggleTheme={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))}
+          operatorKey={operatorKey}
+          onUnlock={unlock}
+          onLock={lock}
+        />
 
-      <aside className="console" aria-label="Incidents">
-        <div className="console-head">
-          <div className="bands" aria-label="Incidents by danger rating">
-            {list.length > 0 ? (
-              <>
-                <div className="band-bar" aria-hidden="true">
-                  {counts.map(({ style, count }) => (
-                    <span key={style.code} style={{ flexGrow: count, background: style.color }} />
-                  ))}
-                </div>
-                <ul className="band-counts">
-                  {counts.map(({ style, count }) => (
-                    <li key={style.code} title={style.label}>
-                      <i style={{ background: style.color } as CSSProperties} />
-                      {style.code} <strong>{count}</strong>
-                    </li>
-                  ))}
-                </ul>
-              </>
-            ) : (
-              <span className="dim">{incidents.data === undefined && !incidents.error ? 'LOADING…' : 'NO INCIDENTS'}</span>
-            )}
-          </div>
-          <label className="switch" title="Toggle with P">
-            <input id="show-pixels" type="checkbox" checked={showPixels} onChange={(e) => setShowPixels(e.target.checked)} />
-            <span>PIXELS 24H</span>
-            <kbd>P</kbd>
-          </label>
+        <div className="sb-body">
+          {selected ? (
+            <FireDetail
+              incident={selected}
+              forecast={selectedForecast}
+              resources={resources.data ?? []}
+              airspace={liveAirspace}
+              timeline={timeline.data}
+              operatorKey={operatorKey}
+              onChanged={refreshAfterAction}
+              onBack={() => setSelectedId(null)}
+            />
+          ) : incidents.data === undefined ? (
+            <p className="hint padded">{incidents.error ? 'Waiting for the server. A free server can take up to a minute to wake up.' : 'Loading fires…'}</p>
+          ) : (
+            <FireList incidents={list} onOpen={setSelectedId} />
+          )}
         </div>
 
-        {incidents.error && list.length === 0 ? (
-          <div className="table-empty">
-            <p>API UNREACHABLE</p>
-            <p className="dim">Retrying every minute. A free server may take up to a minute to wake up.</p>
-          </div>
-        ) : (
-          incidents.data !== undefined && (
-            <IncidentTable incidents={list} selectedId={selectedId} onToggle={toggle} onMove={setSelectedId} />
-          )
-        )}
-
-        {selected && (
-          <IncidentDetail
-            incident={selected}
-            forecast={selectedForecast}
-            resources={resources.data ?? []}
-            airspace={liveAirspace}
-            timeline={timeline.data}
-            operatorKey={operatorKey}
-            onChanged={refreshAfterAction}
-            onClose={() => setSelectedId(null)}
-          />
-        )}
-
-        <footer className="console-foot">
-          <span>
-            <kbd>↑</kbd>
-            <kbd>↓</kbd> select · <kbd>Esc</kbd> clear · <kbd>P</kbd> pixels
-          </span>
-          <span className="dim">Times in UTC</span>
-        </footer>
+        <footer className="sb-foot">Demo project, not an emergency service. In an emergency call 112.</footer>
       </aside>
 
       <main className="map-wrap">
@@ -164,16 +127,11 @@ export function App() {
           forecast={selected ? (selectedForecast ?? null) : null}
           resources={resources.data ?? []}
           airspace={liveAirspace}
+          theme={theme}
           onSelect={toggle}
         />
-        {/* Top-left overlay, clear of the zoom buttons (top right) and the attribution (bottom right). */}
         <div className="map-overlay">
-          <Legend selected={selected} showAirspace={liveAirspace.length > 0} />
-          {selected && (
-            <div className="map-tag" style={{ borderColor: ratingStyle(selected).color }}>
-              INC {selected.id} · <RatingTag incident={selected} long />
-            </div>
-          )}
+          <Legend selected={selected} showAirspace={liveAirspace.length > 0} showPixels={showPixels} onTogglePixels={setShowPixels} />
         </div>
       </main>
     </div>

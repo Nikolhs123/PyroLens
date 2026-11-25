@@ -1,5 +1,6 @@
 import { type FormEvent, useState } from 'react';
 import { actions } from '../api';
+import { Icon } from './Icon';
 
 interface Props {
   operatorKey: string | null;
@@ -7,7 +8,7 @@ interface Props {
   onLock: () => void;
 }
 
-/** Status-strip control: read-only by default; the operator key unlocks dispatcher actions for this tab. */
+/** View-only by default; the operator key unlocks dispatcher actions for this browser tab. */
 export function OperatorControl({ operatorKey, onUnlock, onLock }: Props) {
   const [open, setOpen] = useState(false);
   const [value, setValue] = useState('');
@@ -16,58 +17,63 @@ export function OperatorControl({ operatorKey, onUnlock, onLock }: Props) {
 
   if (operatorKey) {
     return (
-      <button type="button" className="cell op op-on" onClick={onLock} title="Dispatcher actions enabled. Click to lock.">
-        <i aria-hidden="true" />
-        OPERATOR
-      </button>
+      <div className="op-row on">
+        <Icon name="unlock" size={16} />
+        <span>Operator mode: you can change fires, units and airspace.</span>
+        <button type="button" className="link" onClick={onLock}>
+          Lock
+        </button>
+      </div>
     );
   }
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
-    if (!value.trim()) return;
+    const key = value.trim();
+    if (!key) return;
     setChecking(true);
-    const result = await actions.checkKey(value.trim());
+    const result = await actions.checkKey(key);
     setChecking(false);
     if (result.ok) {
-      onUnlock(value.trim());
+      onUnlock(key);
       setValue('');
       setError(null);
       setOpen(false);
     } else {
       setError(
-        result.status === 401 ? 'Wrong key.' : result.status === 403 ? 'This server is read-only: no operator key is configured.' : result.message,
+        result.status === 401
+          ? 'That key is not right.'
+          : result.status === 403
+            ? 'This server is view-only: no operator key is set up.'
+            : result.message,
       );
     }
   };
 
   return (
-    <div className="op-wrap">
-      <button type="button" className="cell op" onClick={() => setOpen((o) => !o)} aria-expanded={open} title="Unlock dispatcher actions">
-        <i aria-hidden="true" />
-        READ-ONLY
-      </button>
+    <div className="op">
+      <div className="op-row">
+        <Icon name="lock" size={16} />
+        <span>View only</span>
+        <button type="button" className="link" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
+          {open ? 'Cancel' : 'Unlock operator mode'}
+        </button>
+      </div>
       {open && (
         <form className="op-form" onSubmit={submit}>
-          <label htmlFor="operator-key">OPERATOR KEY</label>
-          <input
-            id="operator-key"
-            type="password"
-            autoComplete="off"
-            autoFocus
-            value={value}
-            onChange={(e) => setValue(e.target.value)}
-          />
-          <div className="op-buttons">
-            <button type="submit" className="btn btn-primary" disabled={checking || !value.trim()}>
-              {checking ? 'CHECKING…' : 'UNLOCK'}
-            </button>
-            <button type="button" className="btn" onClick={() => setOpen(false)}>
-              CANCEL
+          <label htmlFor="operator-key">Operator key</label>
+          <div className="op-input">
+            <input id="operator-key" type="password" autoComplete="off" autoFocus value={value} onChange={(e) => setValue(e.target.value)} />
+            <button type="submit" className="button primary" disabled={checking || !value.trim()}>
+              {checking ? 'Checking…' : 'Unlock'}
             </button>
           </div>
-          {error && <p className="op-error" role="alert">{error}</p>}
-          <p className="dim">Kept for this browser tab only. Visitors without the key see everything but cannot change it.</p>
+          {error && (
+            <p className="op-error" role="alert">
+              {error}
+            </p>
+          )}
+          <p className="hint">Kept for this browser tab only. Everyone else can look but not change anything.</p>
         </form>
       )}
     </div>

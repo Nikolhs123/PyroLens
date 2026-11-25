@@ -1,52 +1,64 @@
 import type { CSSProperties } from 'react';
 import type { Incident } from '../api';
-import { NO_FORECAST, RATINGS, ratingStyle } from '../ratings';
+import { RATINGS, ratingStyle } from '../ratings';
 import { AIRSPACE_COLORS } from './AirspaceTab';
 import { BURNING_COLOR, SELECTED_COLOR } from './MapView';
 
-/** Map key: rating colours always; burning area, spread areas, units and airspace while an incident is open. */
-export function Legend({ selected, showAirspace }: { selected: Incident | null; showAirspace: boolean }) {
-  const keyColors = {
-    '--key-forecast': selected ? ratingStyle(selected).color : BURNING_COLOR,
-    '--key-now': BURNING_COLOR,
+interface Props {
+  selected: Incident | null;
+  showAirspace: boolean;
+  showPixels: boolean;
+  onTogglePixels: (on: boolean) => void;
+}
+
+/** Map key, and the one map setting: show raw satellite pixels. */
+export function Legend({ selected, showAirspace, showPixels, onTogglePixels }: Props) {
+  const colors = {
+    '--forecast-color': selected ? ratingStyle(selected).color : BURNING_COLOR,
+    '--burning-color': BURNING_COLOR,
   } as CSSProperties;
 
   return (
-    <div className="legend" style={keyColors} aria-label="Map key">
-      <div className="legend-row">
-        {[...Object.values(RATINGS), NO_FORECAST].map((r) => (
-          <span key={r.code} title={r.label}>
-            <i className="dot" style={{ background: r.color }} />
-            {r.code}
-          </span>
+    <div className="legend" style={colors} aria-label="Map key">
+      <p className="legend-title">Fire danger</p>
+      <ul className="legend-row">
+        {Object.values(RATINGS).map((r) => (
+          <li key={r.code}>
+            <i className="legend-dot" style={{ background: r.color }} />
+            {r.short}
+          </li>
         ))}
-      </div>
+      </ul>
       {selected && (
-        <div className="legend-row">
-          <span>
-            <i className="key key-now" /> BURNING
-          </span>
-          <span>
-            <i className="key key-1h" /> +1H
-          </span>
-          <span>
-            <i className="key key-3h" /> +3H
-          </span>
-          <span>
-            <i className="dot" style={{ background: SELECTED_COLOR }} /> UNIT
-          </span>
-        </div>
+        <ul className="legend-row">
+          <li>
+            <i className="swatch swatch-now" /> Burning now
+          </li>
+          <li>
+            <i className="swatch swatch-1h" /> 1 h
+          </li>
+          <li>
+            <i className="swatch swatch-3h" /> 3 h
+          </li>
+          <li>
+            <i className="legend-dot" style={{ background: SELECTED_COLOR }} /> Unit
+          </li>
+        </ul>
       )}
       {showAirspace && (
-        <div className="legend-row">
-          <span>
-            <i className="ring" style={{ borderColor: AIRSPACE_COLORS.low }} /> AIR LOW
-          </span>
-          <span>
-            <i className="ring" style={{ borderColor: AIRSPACE_COLORS.high }} /> AIR HIGH
-          </span>
-        </div>
+        <ul className="legend-row">
+          <li>
+            <i className="legend-ring" style={{ borderColor: AIRSPACE_COLORS.low }} /> Drone airspace
+          </li>
+          <li>
+            <i className="legend-ring" style={{ borderColor: AIRSPACE_COLORS.high }} /> Aircraft airspace
+          </li>
+        </ul>
       )}
+      <label className="legend-toggle" title="Shortcut: P">
+        <input type="checkbox" checked={showPixels} onChange={(e) => onTogglePixels(e.target.checked)} />
+        Satellite pixels, last 24 h
+      </label>
     </div>
   );
 }

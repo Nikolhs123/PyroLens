@@ -3,14 +3,28 @@ import maplibregl, { type GeoJSONSource, type LngLatBoundsLike, type Map as MapL
 import { useEffect, useRef, useState } from 'react';
 import type { AirspaceReservation, Detection, Forecast, Incident, Resource } from '../api';
 import { bboxOf, padBBox } from '../geo';
+import { describePlace, nearestPlace } from '../places';
 import { ratingStyle } from '../ratings';
+import type { Theme } from '../theme';
 import { AIRSPACE_COLORS } from './AirspaceTab';
 
-/** Free vector tiles, no key: https://openfreemap.org */
-const STYLE_URL = 'https://tiles.openfreemap.org/styles/dark';
+/**
+ * Free vector tiles, no key (https://openfreemap.org). "liberty" is the bright, OpenStreetMap-like look of the
+ * first version of the map; "dark" goes with the dark theme.
+ */
+const STYLES: Record<Theme, string> = {
+  light: 'https://tiles.openfreemap.org/styles/liberty',
+  dark: 'https://tiles.openfreemap.org/styles/dark',
+};
+
+/** Overlay colours that depend on the basemap underneath. */
+const PAINT: Record<Theme, { outline: string; selected: string; label: string; halo: string }> = {
+  light: { outline: '#ffffff', selected: '#d98e00', label: '#7a4d00', halo: '#ffffff' },
+  dark: { outline: '#0a0e11', selected: '#ffb000', label: '#ffb000', halo: '#0a0e11' },
+};
 
 export const BURNING_COLOR = '#ff5a1f';
-export const SELECTED_COLOR = '#ffb000';
+export const SELECTED_COLOR = '#e3a008';
 const PIXEL_COLOR = '#ff8a3d';
 const GREECE: LngLatBoundsLike = [
   [19.4, 34.8],
@@ -29,23 +43,29 @@ interface Props {
   forecast: Forecast | null;
   resources: Resource[];
   airspace: AirspaceReservation[];
+  theme: Theme;
   onSelect: (id: number) => void;
 }
 
-export function MapView({ incidents, detections, selected, forecast, resources, airspace, onSelect }: Props) {
+export function MapView({ incidents, detections, selected, forecast, resources, airspace, theme, onSelect }: Props) {
   const container = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const onSelectRef = useRef(onSelect);
   onSelectRef.current = onSelect;
+  const themeRef = useRef(theme);
+  themeRef.current = theme;
   const hadSelection = useRef(false);
-  const [ready, setReady] = useState(false);
+  // Counts loaded styles: our sources and layers are added again after every style change (theme switch),
+  // and the data effects below re-run when it changes.
+  const [styleVersion, setStyleVersion] = useState(0);
+  const ready = styleVersion > 0;
 
   // Create the map once.
   useEffect(() => {
     const element = container.current!;
     const map = new maplibregl.Map({
       container: element,
-      style: STYLE_URL,
+      style: STYLES[themeRef.current],
       bounds: GREECE,
       fitBoundsOptions: { padding: PADDING },
       attributionControl: false,
@@ -59,11 +79,13 @@ export function MapView({ incidents, detections, selected, forecast, resources, 
       'bottom-right',
     );
 
-    map.on('load', () => {
-      addLayers(map);
-      wireInteractions(map, (id) => onSelectRef.current(id));
-      setReady(true);
+    // Fires for the first style and after every setStyle: a new style has none of our layers.
+    map.on('style.load', () => {
+      addLayers(map, themeRef.current);
+      setStyleVersion((v) => v + 1);
     });
+    // Listeners bound to layer ids survive style changes, so these are added once.
+    map.once('load', () => wireInteractions(map, (id) => onSelectRef.current(id)));
 
     // The map measures its container when created. If the stylesheet arrived after the script (common on a
     // cold-started host) that size is 0×0; re-measure on every size change and fit Greece once it is real.
@@ -83,9 +105,20 @@ export function MapView({ incidents, detections, selected, forecast, resources, 
       observer.disconnect();
       map.remove();
       mapRef.current = null;
-      setReady(false);
+      setStyleVersion(0);
     };
   }, []);
+
+  // Switch basemap with the theme; the 'style.load' handler above restores our layers.
+  const appliedTheme = useRef(theme);
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || appliedTheme.current === theme) return;
+    appliedTheme.current = theme;
+    // diff: false forces a full reload. With the default diff, MapLibre would remove our layers (they are not in
+    // the new style) without firing 'style.load', so they would never come back.
+    map.setStyle(STYLES[theme], { diff: false });
+  }, [theme]);
 
   // Incidents and their burning footprints.
   useEffect(() => {
@@ -102,7 +135,7 @@ export function MapView({ incidents, detections, selected, forecast, resources, 
           color: style.color,
           radius: radiusFor(i),
           selected: i.id === selected?.id,
-          label: `#${i.id} · ${style.code} · ${i.detectionCount} px`,
+          label: `${capitalise(describePlace(nearestPlace(i.latitude, i.longitude)))} · ${style.short} danger`,
         },
       };
     });
@@ -114,7 +147,7 @@ export function MapView({ incidents, detections, selected, forecast, resources, 
         .filter((i) => i.footprint && i.footprint.type !== 'Point')
         .map((i) => ({ type: 'Feature', geometry: i.footprint!, properties: { id: i.id } })),
     });
-  }, [ready, incidents, selected?.id]);
+  }, [styleVersion, incidents, selected?.id]);
 
   // Spread areas of the selected incident.
   useEffect(() => {
@@ -134,7 +167,7 @@ export function MapView({ incidents, detections, selected, forecast, resources, 
           }
         : EMPTY,
     );
-  }, [ready, forecast, selected]);
+  }, [styleVersion, forecast, selected]);
 
   // Raw satellite pixels.
   useEffect(() => {
@@ -149,7 +182,7 @@ export function MapView({ incidents, detections, selected, forecast, resources, 
         properties: {},
       })),
     });
-  }, [ready, detections]);
+  }, [styleVersion, detections]);
 
   // Live airspace reservations, all incidents.
   useEffect(() => {
@@ -164,7 +197,7 @@ export function MapView({ incidents, detections, selected, forecast, resources, 
         properties: { color: AIRSPACE_COLORS[a.level], level: a.level },
       })),
     });
-  }, [ready, airspace]);
+  }, [styleVersion, airspace]);
 
   // Units committed to the selected incident: their base, and a line to the fire.
   useEffect(() => {
@@ -183,11 +216,11 @@ export function MapView({ incidents, detections, selected, forecast, resources, 
         {
           type: 'Feature',
           geometry: { type: 'Point', coordinates: [r.longitude, r.latitude] },
-          properties: { status: r.status, label: `${r.callsign}${r.status === 'reserved' ? ' (HOLD)' : ''}` },
+          properties: { status: r.status, label: `${r.callsign}${r.status === 'reserved' ? ' (on hold)' : ''}` },
         },
       ]),
     });
-  }, [ready, resources, selected]);
+  }, [styleVersion, resources, selected]);
 
   // Zoom to the selection (and its +3 h area once loaded); back to Greece when cleared.
   const forecastKey = forecast && selected && forecast.incidentId === selected.id ? forecast.issuedAt : null;
@@ -218,14 +251,22 @@ export function MapView({ incidents, detections, selected, forecast, resources, 
   return <div ref={container} className="map" role="region" aria-label="Map of fire incidents in Greece" />;
 }
 
-const source = (map: MapLibreMap, id: string) => map.getSource(id) as GeoJSONSource;
+/**
+ * Our GeoJSON source, or a stand-in that ignores data while a style change is in progress (the new style has no
+ * sources until 'style.load', and that handler bumps styleVersion so every effect pushes its data again).
+ */
+const source = (map: MapLibreMap, id: string): Pick<GeoJSONSource, 'setData'> =>
+  (map.getSource(id) as GeoJSONSource | undefined) ?? { setData: () => undefined as never };
+
+const capitalise = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 
 /**
  * Layers from bottom to top: forecast fills, burning footprints, forecast outlines, pixels, incident markers.
  * The outlines sit above the footprints: a spread area is the footprint plus the ellipse, so its edge often
  * runs along the burning area and would otherwise be hidden by it.
  */
-function addLayers(map: MapLibreMap) {
+function addLayers(map: MapLibreMap, theme: Theme) {
+  const paint = PAINT[theme];
   for (const id of ['airspace', 'forecast', 'footprints', 'units', 'pixels', 'incidents']) {
     map.addSource(id, { type: 'geojson', data: EMPTY });
   }
@@ -283,7 +324,7 @@ function addLayers(map: MapLibreMap) {
     source: 'units',
     filter: ['==', ['geometry-type'], 'LineString'],
     paint: {
-      'line-color': SELECTED_COLOR,
+      'line-color': paint.selected,
       'line-width': 1.2,
       'line-opacity': ['case', ['==', ['get', 'status'], 'assigned'], 0.85, 0.45],
       'line-dasharray': [4, 3],
@@ -294,7 +335,7 @@ function addLayers(map: MapLibreMap) {
     type: 'circle',
     source: 'units',
     filter: ['==', ['geometry-type'], 'Point'],
-    paint: { 'circle-radius': 4, 'circle-color': SELECTED_COLOR, 'circle-stroke-color': '#0a0e11', 'circle-stroke-width': 1.5 },
+    paint: { 'circle-radius': 4, 'circle-color': paint.selected, 'circle-stroke-color': paint.outline, 'circle-stroke-width': 1.5 },
   });
   map.addLayer({
     id: 'units-label',
@@ -309,7 +350,7 @@ function addLayers(map: MapLibreMap) {
       'text-anchor': 'top',
       'text-allow-overlap': true,
     },
-    paint: { 'text-color': SELECTED_COLOR, 'text-halo-color': '#0a0e11', 'text-halo-width': 1.5 },
+    paint: { 'text-color': paint.label, 'text-halo-color': paint.halo, 'text-halo-width': 1.5 },
   });
   map.addLayer({
     id: 'pixels',
@@ -325,8 +366,8 @@ function addLayers(map: MapLibreMap) {
     paint: {
       'circle-radius': ['+', ['get', 'radius'], 5],
       'circle-color': 'rgba(0, 0, 0, 0)',
-      'circle-stroke-color': SELECTED_COLOR,
-      'circle-stroke-width': 2,
+      'circle-stroke-color': paint.selected,
+      'circle-stroke-width': 2.5,
     },
   });
   map.addLayer({
@@ -337,7 +378,7 @@ function addLayers(map: MapLibreMap) {
       'circle-radius': ['get', 'radius'],
       'circle-color': ['get', 'color'],
       'circle-opacity': 0.92,
-      'circle-stroke-color': '#0a0e11',
+      'circle-stroke-color': paint.outline,
       'circle-stroke-width': 1.5,
     },
   });

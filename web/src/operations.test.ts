@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { TimelineEvent } from './api';
-import { STATUS, countdown, describeEvent } from './operations';
+import type { Forecast, TimelineEvent } from './api';
+import { STATUS, countdown, describeEvent, forecastSentence } from './operations';
 
 const event = (partial: Partial<TimelineEvent>): TimelineEvent => ({
   id: 1,
@@ -28,20 +28,50 @@ describe('countdown', () => {
 });
 
 describe('describeEvent', () => {
-  it('reads like a log line', () => {
-    expect(describeEvent(event({ type: 'statusChanged', fromStatus: 'detected', toStatus: 'confirmed' }))).toBe('DET → CNF');
-    expect(describeEvent(event({ type: 'resourceReserved', details: { callsign: 'DRN-04' } }))).toBe('Unit reserved DRN-04');
-    expect(describeEvent(event({ type: 'airspaceReserved', details: { level: 'high', radiusMeters: 3000 } }))).toBe(
-      'Airspace reserved: HIGH 3 km',
+  it('reads like a sentence a person would write in a log', () => {
+    expect(describeEvent(event({ type: 'created' }))).toBe('Satellites detected the fire.');
+    expect(describeEvent(event({ type: 'statusChanged', actor: 'Nick', fromStatus: 'detected', toStatus: 'confirmed' }))).toBe(
+      'Nick confirmed the fire.',
     );
-    expect(describeEvent(event({ type: 'created' }))).toBe('Incident opened from satellite detections');
+    expect(describeEvent(event({ type: 'statusChanged', actor: 'Nick', fromStatus: 'contained', toStatus: 'active' }))).toBe(
+      'Nick reported a flare-up.',
+    );
+    expect(describeEvent(event({ type: 'statusChanged', actor: 'Nick', fromStatus: 'detected', toStatus: 'closed' }))).toBe(
+      'Nick closed it as a false alarm.',
+    );
+    expect(describeEvent(event({ type: 'resourceAssigned', actor: 'Nick', details: { callsign: 'CRW-06' } }))).toBe('Nick sent CRW-06.');
+    expect(describeEvent(event({ type: 'airspaceReserved', actor: 'Nick', details: { level: 'high', radiusMeters: 3000 } }))).toBe(
+      'Nick reserved high (aircraft) airspace, 3 km around the fire.',
+    );
+  });
+});
+
+describe('forecastSentence', () => {
+  it('turns the forecast into one plain sentence', () => {
+    const weather = { meanTemperatureC: 12, meanRelativeHumidityPercent: 62, meanWindSpeedKmh: 13.4, meanWindFromDegrees: 85, maxWindGustKmh: 24 };
+    const horizon = (hours: number, head: number) => ({
+      horizonHours: hours,
+      weather,
+      peakFfdi: 3,
+      dangerRating: 'lowModerate' as const,
+      peakRateOfSpreadMetersPerHour: 40,
+      headDistanceMeters: head,
+      lengthToBreadth: 1.8,
+      spreadBearingDegrees: 262,
+      spreadArea: { type: 'Polygon' as const, coordinates: [] },
+    });
+    const forecast = { horizons: [horizon(1, 35), horizon(3, 120)] } as unknown as Forecast;
+
+    expect(forecastSentence(forecast)).toBe(
+      'Low fire danger. Wind 13 km/h from the east could carry it about 120 m west within 3 hours.',
+    );
+    expect(forecastSentence(null)).toBe('No weather forecast yet.');
   });
 });
 
 describe('STATUS', () => {
-  it('gives every status a distinct three-letter code', () => {
-    const codes = Object.values(STATUS).map((s) => s.code);
-    expect(new Set(codes).size).toBe(codes.length);
-    expect(codes.every((c) => c.length === 3)).toBe(true);
+  it('ranks fires being fought first', () => {
+    const order = Object.entries(STATUS).sort((a, b) => b[1].rank - a[1].rank).map(([s]) => s);
+    expect(order).toEqual(['active', 'confirmed', 'contained', 'detected', 'closed']);
   });
 });

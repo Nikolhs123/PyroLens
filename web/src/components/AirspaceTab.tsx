@@ -1,8 +1,9 @@
 import { type FormEvent, useState } from 'react';
 import { type AirspaceLevel, type AirspaceReservation, type Incident, actions } from '../api';
-import { utcStamp } from '../format';
+import { localStamp } from '../format';
 
-export const AIRSPACE_COLORS: Record<AirspaceLevel, string> = { low: '#3fc1d6', high: '#a78bfa' };
+export const AIRSPACE_COLORS: Record<AirspaceLevel, string> = { low: '#1aa3b8', high: '#8b6be8' };
+const LEVEL_NAME: Record<AirspaceLevel, string> = { low: 'Low airspace (drones)', high: 'High airspace (aircraft)' };
 
 interface Props {
   incident: Incident;
@@ -10,6 +11,8 @@ interface Props {
   operatorKey: string | null;
   onResult: (ok: boolean, message: string) => void;
 }
+
+const clock = (iso: string) => localStamp(iso).split(', ')[1];
 
 export function AirspaceTab({ incident, reservations, operatorKey, onResult }: Props) {
   const [level, setLevel] = useState<AirspaceLevel>('high');
@@ -25,93 +28,80 @@ export function AirspaceTab({ incident, reservations, operatorKey, onResult }: P
     setBusy(true);
     const result = await actions.reserveAirspace(operatorKey, incident.id, level, radiusKm * 1000, minutes);
     setBusy(false);
-    onResult(result.ok, result.ok ? `${level.toUpperCase()} airspace reserved, ${radiusKm} km.` : result.message);
+    onResult(result.ok, result.ok ? `${LEVEL_NAME[level]} reserved, ${radiusKm} km around the fire.` : result.message);
   };
 
   const cancel = async (id: number) => {
     if (!operatorKey) return;
     const result = await actions.cancelAirspace(operatorKey, id);
-    onResult(result.ok, result.ok ? `Airspace reservation ${id} cancelled.` : result.message);
+    onResult(result.ok, result.ok ? 'Reservation cancelled.' : result.message);
   };
 
   return (
-    <div className="tab-body">
-      <h3 className="rule">
-        <span>RESERVED</span>
-        <span className="dim">{mine.length}</span>
-      </h3>
-      {mine.length === 0 ? (
-        <p className="dim">No airspace reserved for this incident.</p>
-      ) : (
-        <table className="grid">
-          <tbody>
+    <div className="stack">
+      <section>
+        <h3>Reserved for this fire</h3>
+        {mine.length === 0 ? (
+          <p className="hint">Nothing reserved.</p>
+        ) : (
+          <ul className="reservations">
             {mine.map((r) => (
-              <tr key={r.id}>
-                <th scope="row">
-                  <span className="lvl" style={{ borderColor: AIRSPACE_COLORS[r.level], color: AIRSPACE_COLORS[r.level] }}>
-                    {r.level.toUpperCase()}
+              <li key={r.id}>
+                <span className="ring" style={{ borderColor: AIRSPACE_COLORS[r.level] }} aria-hidden="true" />
+                <span className="unit-main">
+                  <span className="unit-name">{LEVEL_NAME[r.level]}</span>
+                  <span className="unit-state">
+                    {r.radiusMeters / 1000} km around the fire, {clock(r.startsAt)} to {clock(r.endsAt)}, by {r.reservedBy}
                   </span>
-                </th>
-                <td className="num">{r.radiusMeters / 1000} km</td>
-                <td>
-                  {utcStamp(r.startsAt)} → {utcStamp(r.endsAt).split(' ').at(-1)}
-                </td>
-                <td className="num actions">
-                  {operatorKey && (
-                    <button type="button" className="btn" onClick={() => cancel(r.id)}>
-                      CANCEL
-                    </button>
-                  )}
-                </td>
-              </tr>
+                </span>
+                {operatorKey && (
+                  <button type="button" className="button small" onClick={() => cancel(r.id)}>
+                    Cancel
+                  </button>
+                )}
+              </li>
             ))}
-          </tbody>
-        </table>
-      )}
+          </ul>
+        )}
+      </section>
 
       {operatorKey && (
-        <form className="air-form" onSubmit={reserve}>
-          <h3 className="rule">
-            <span>NEW RESERVATION</span>
-          </h3>
-          {!incident.acceptsResources && <p className="dim">Confirm the incident to reserve airspace for it.</p>}
-          <div className="air-fields">
-            <label>
-              BAND
-              <select value={level} onChange={(e) => setLevel(e.target.value as AirspaceLevel)}>
-                <option value="high">HIGH · aircraft</option>
-                <option value="low">LOW · drones</option>
-              </select>
-            </label>
-            <label>
-              RADIUS
-              <select value={radiusKm} onChange={(e) => setRadiusKm(Number(e.target.value))}>
-                {[1, 2, 3, 5, 10].map((km) => (
-                  <option key={km} value={km}>
-                    {km} km
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              FROM NOW FOR
-              <select value={minutes} onChange={(e) => setMinutes(Number(e.target.value))}>
-                {[30, 60, 120, 240, 480].map((m) => (
-                  <option key={m} value={m}>
-                    {m < 60 ? `${m} min` : `${m / 60} h`}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <button type="submit" className="btn btn-primary" disabled={busy || !incident.acceptsResources}>
-              RESERVE
-            </button>
-          </div>
+        <form className="sentence-form" onSubmit={reserve}>
+          <h3>Reserve airspace</h3>
+          {!incident.acceptsResources && <p className="hint">Confirm the fire before reserving airspace.</p>}
+          <p>
+            Keep{' '}
+            <select aria-label="Airspace band" value={level} onChange={(e) => setLevel(e.target.value as AirspaceLevel)}>
+              <option value="high">high airspace (aircraft)</option>
+              <option value="low">low airspace (drones)</option>
+            </select>{' '}
+            clear within{' '}
+            <select aria-label="Radius" value={radiusKm} onChange={(e) => setRadiusKm(Number(e.target.value))}>
+              {[1, 2, 3, 5, 10].map((km) => (
+                <option key={km} value={km}>
+                  {km} km
+                </option>
+              ))}
+            </select>{' '}
+            for{' '}
+            <select aria-label="Duration" value={minutes} onChange={(e) => setMinutes(Number(e.target.value))}>
+              {[30, 60, 120, 240, 480].map((m) => (
+                <option key={m} value={m}>
+                  {m < 60 ? `${m} minutes` : m === 60 ? '1 hour' : `${m / 60} hours`}
+                </option>
+              ))}
+            </select>{' '}
+            from now.
+          </p>
+          <button type="submit" className="button primary" disabled={busy || !incident.acceptsResources}>
+            Reserve
+          </button>
         </form>
       )}
-      <p className="fine">
-        Two reservations in the same band may not overlap in space and time anywhere. PostgreSQL enforces this with an
-        exclusion constraint, so simultaneous requests cannot both succeed.
+
+      <p className="hint">
+        Two reservations in the same band can never overlap in place and time. The database enforces this, so two
+        dispatchers asking at the same moment cannot both get it.
       </p>
     </div>
   );

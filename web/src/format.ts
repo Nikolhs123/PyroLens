@@ -48,6 +48,12 @@ export function utcStamp(iso: string): string {
   return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}Z`;
 }
 
+/** "23 Nov, 12:25" in the viewer's own time zone. */
+export function localStamp(iso: string): string {
+  const d = new Date(iso);
+  return `${d.getDate()} ${MONTHS[d.getMonth()]}, ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 export function formatCoordinates(latitude: number, longitude: number): string {
   return `${latitude.toFixed(3)}°N ${longitude.toFixed(3)}°E`;
 }

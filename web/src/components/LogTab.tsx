@@ -1,26 +1,25 @@
 import type { TimelineEvent } from '../api';
-import { utcStamp } from '../format';
+import { localStamp } from '../format';
 import { describeEvent } from '../operations';
 
-/** The incident's append-only timeline, newest first. */
+/** The fire's history, newest first. */
 export function LogTab({ events }: { events: TimelineEvent[] | undefined }) {
-  if (events === undefined) return <p className="dim">Loading…</p>;
+  if (events === undefined) return <p className="hint">Loading…</p>;
 
   return (
-    <div className="tab-body">
+    <div className="stack">
       <ol className="log">
         {[...events].reverse().map((e) => (
           <li key={e.id}>
-            <time>{utcStamp(e.occurredAt)}</time>
-            <span className="log-what">
+            <time dateTime={e.occurredAt}>{localStamp(e.occurredAt)}</time>
+            <p>
               {describeEvent(e)}
               {e.note && <span className="log-note"> “{e.note}”</span>}
-            </span>
-            <span className="log-who">{e.actor}</span>
+            </p>
           </li>
         ))}
       </ol>
-      <p className="fine">Append-only: the database rejects any change to past entries.</p>
+      <p className="hint">Entries cannot be edited or deleted afterwards; the database refuses it.</p>
     </div>
   );
 }

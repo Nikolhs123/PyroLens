@@ -2,12 +2,13 @@ import { useState } from 'react';
 import { type Incident, type Resource, actions, api } from '../api';
 import { KIND, countdown } from '../operations';
 import { useNow, usePolling } from '../usePolling';
+import { KindIcon } from './Icon';
 
 interface Props {
   incident: Incident;
   resources: Resource[];
   operatorKey: string | null;
-  /** Report the outcome of an action; refresh shared data after it. */
+  /** Report the outcome of an action; shared data is refreshed after it. */
   onResult: (ok: boolean, message: string) => void;
 }
 
@@ -16,116 +17,104 @@ export function UnitsTab({ incident, resources, operatorKey, onResult }: Props) 
   const [busy, setBusy] = useState<number | null>(null);
   const suggestions = usePolling((s) => api.suggestions(incident.id, s), 30_000, incident.id);
 
-  const committed = resources.filter((r) => r.incidentId === incident.id && (r.status === 'reserved' || r.status === 'assigned'));
+  const onFire = resources.filter((r) => r.incidentId === incident.id && (r.status === 'reserved' || r.status === 'assigned'));
 
-  const run = async (resourceId: number, verb: string, action: () => ReturnType<typeof actions.reserve>) => {
+  const run = async (resourceId: number, done: string, action: () => ReturnType<typeof actions.reserve>) => {
     setBusy(resourceId);
     const result = await action();
     setBusy(null);
     suggestions.reload();
-    onResult(result.ok, result.ok ? `${result.value.callsign} ${verb}.` : result.message);
+    onResult(result.ok, result.ok ? `${result.value.callsign} ${done}.` : result.message);
   };
 
   return (
-    <div className="tab-body">
-      <h3 className="rule">
-        <span>COMMITTED</span>
-        <span className="dim">{committed.length}</span>
-      </h3>
-      {committed.length === 0 ? (
-        <p className="dim">No units on this incident.</p>
-      ) : (
-        <table className="grid">
-          <tbody>
-            {committed.map((r) => {
-              const expiresIn = r.reservedUntil ? countdown(r.reservedUntil, now) : null;
+    <div className="stack">
+      <section>
+        <h3>On this fire</h3>
+        {onFire.length === 0 ? (
+          <p className="hint">No units yet.</p>
+        ) : (
+          <ul className="units">
+            {onFire.map((r) => {
+              const left = r.reservedUntil ? countdown(r.reservedUntil, now) : null;
               return (
-                <tr key={r.id}>
-                  <th scope="row">{r.callsign}</th>
-                  <td className="dim">{KIND[r.kind].label}</td>
-                  <td>
-                    {r.status === 'assigned' ? (
-                      <span className="unit-state assigned">ASSIGNED</span>
-                    ) : (
-                      <span className="unit-state reserved" title="Hold expires; assign it before then">
-                        HOLD {expiresIn}
-                      </span>
-                    )}
-                  </td>
-                  <td className="num actions">
-                    {operatorKey && r.status === 'reserved' && expiresIn !== 'expired' && (
+                <li key={r.id}>
+                  <KindIcon kind={r.kind} />
+                  <span className="unit-main">
+                    <span className="unit-name">
+                      <span className="callsign">{r.callsign}</span> {KIND[r.kind].label}
+                    </span>
+                    <span className={r.status === 'assigned' ? 'unit-state sent' : 'unit-state held'}>
+                      {r.status === 'assigned' ? `Sent from ${r.baseName}` : left === 'expired' ? 'Hold ran out' : `On hold, ${left} left to send`}
+                    </span>
+                  </span>
+                  {operatorKey && (
+                    <span className="unit-actions">
+                      {r.status === 'reserved' && left !== 'expired' && (
+                        <button
+                          type="button"
+                          className="button primary small"
+                          disabled={busy === r.id}
+                          onClick={() => run(r.id, 'is on its way', () => actions.assign(operatorKey, r.id, incident.id))}
+                        >
+                          Send
+                        </button>
+                      )}
                       <button
                         type="button"
-                        className="btn btn-primary"
-                        disabled={busy === r.id}
-                        onClick={() => run(r.id, 'assigned', () => actions.assign(operatorKey, r.id, incident.id))}
-                      >
-                        ASSIGN
-                      </button>
-                    )}
-                    {operatorKey && (
-                      <button
-                        type="button"
-                        className="btn"
+                        className="button small"
                         disabled={busy === r.id}
                         onClick={() => run(r.id, 'released', () => actions.release(operatorKey, r.id, incident.id))}
                       >
-                        RELEASE
+                        Release
                       </button>
-                    )}
-                  </td>
-                </tr>
+                    </span>
+                  )}
+                </li>
               );
             })}
-          </tbody>
-        </table>
-      )}
+          </ul>
+        )}
+      </section>
 
-      <h3 className="rule">
-        <span>NEAREST AVAILABLE</span>
-        <span className="dim">by ETA</span>
-      </h3>
-      {!incident.acceptsResources && <p className="dim">Confirm the incident to commit units to it.</p>}
-      {suggestions.data === undefined ? (
-        <p className="dim">Loading…</p>
-      ) : (
-        <table className="grid">
-          <thead>
-            <tr>
-              <th scope="col">UNIT</th>
-              <th scope="col">BASE</th>
-              <th scope="col" className="num">DIST</th>
-              <th scope="col" className="num">ETA</th>
-              {operatorKey && <th scope="col" />}
-            </tr>
-          </thead>
-          <tbody>
+      <section>
+        <h3>Closest available</h3>
+        {operatorKey && <p className="hint">Hold a unit for 5 minutes while you decide, then send it.</p>}
+        {!incident.acceptsResources && <p className="hint">Confirm the fire before sending units.</p>}
+        {suggestions.data === undefined ? (
+          <p className="hint">Looking for units…</p>
+        ) : (
+          <ul className="units">
             {suggestions.data.map(({ resource: r, distanceMeters, etaMinutes }) => (
-              <tr key={r.id}>
-                <th scope="row" title={KIND[r.kind].label}>
-                  {r.callsign}
-                </th>
-                <td className="dim">{r.baseName}</td>
-                <td className="num">{Math.round(distanceMeters / 1000)} km</td>
-                <td className="num">{etaMinutes}′</td>
+              <li key={r.id}>
+                <KindIcon kind={r.kind} />
+                <span className="unit-main">
+                  <span className="unit-name">
+                    <span className="callsign">{r.callsign}</span> {KIND[r.kind].label}
+                  </span>
+                  <span className="unit-state">
+                    {r.baseName}, {Math.round(distanceMeters / 1000)} km away, about {etaMinutes} min
+                  </span>
+                </span>
                 {operatorKey && (
-                  <td className="num actions">
+                  <span className="unit-actions">
                     <button
                       type="button"
-                      className="btn"
+                      className="button small"
                       disabled={!incident.acceptsResources || busy === r.id}
-                      onClick={() => run(r.id, 'reserved for 5 min', () => actions.reserve(operatorKey, r.id, incident.id))}
+                      onClick={() => run(r.id, 'is on hold for 5 minutes', () => actions.reserve(operatorKey, r.id, incident.id))}
                     >
-                      RESERVE
+                      Hold
                     </button>
-                  </td>
+                  </span>
                 )}
-              </tr>
+              </li>
             ))}
-          </tbody>
-        </table>
-      )}
-      <p className="fine">Simulated fleet at real Greek bases. ETA: straight line for aircraft, ×1.3 by road for ground units.</p>
+          </ul>
+        )}
+      </section>
+
+      <p className="hint">The fleet is simulated, at real Greek bases. Travel times use a straight line for aircraft and roads (×1.3) for vehicles.</p>
     </div>
   );
 }
