@@ -1,7 +1,9 @@
 # The worker on a schedule, for free: GitHub Actions runs the published worker image once per cycle.
 #   ingestion: every 10 minutes   forecast: at :05 and :35
 # Needs two repository secrets: DATABASE_URL (Postgres URL, e.g. Supabase session pooler) and FIRMS_MAP_KEY.
-# GitHub may start scheduled runs a few minutes late, and turns schedules off after 60 days without commits.
+# GitHub runs free schedules when it has capacity (sometimes hours apart) and turns them off after 60 days without
+# commits. The website also runs both jobs while someone is visiting; a run here is skipped if the site ran the same
+# job in the last 5 minutes (see src/PyroLens.Infrastructure/Jobs/JobRunner.cs).
 name: Scheduled jobs
 
 on:

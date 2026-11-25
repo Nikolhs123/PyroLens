@@ -1,6 +1,6 @@
 using Microsoft.Extensions.Options;
 using PyroLens.Infrastructure;
-using PyroLens.Infrastructure.Ingestion;
+using PyroLens.Infrastructure.Jobs;
 
 namespace PyroLens.Worker;
 
@@ -11,5 +11,5 @@ public sealed class IngestionWorker(IServiceProvider services, IOptions<Ingestio
     protected override TimeSpan Interval => options.Value.PollInterval;
 
     protected override Task RunCycleAsync(IServiceProvider scopedServices, CancellationToken ct) =>
-        scopedServices.GetRequiredService<IngestionService>().RunOnceAsync(ct);
+        scopedServices.GetRequiredService<JobRunner>().RunAsync(BackgroundJob.Ingestion, "worker", TimeSpan.Zero, ct);
 }

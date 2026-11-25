@@ -1,6 +1,5 @@
 using PyroLens.Infrastructure;
-using PyroLens.Infrastructure.Forecasting;
-using PyroLens.Infrastructure.Ingestion;
+using PyroLens.Infrastructure.Jobs;
 using PyroLens.Worker;
 
 var builder = Host.CreateApplicationBuilder(args);
@@ -8,7 +7,7 @@ var builder = Host.CreateApplicationBuilder(args);
 builder.Services.AddPyroLensIngestion(builder.Configuration);
 builder.Services.AddPyroLensForecasting(builder.Configuration);
 
-// `--once ingestion` or `--once forecast`: run one cycle and exit (scheduled jobs in Azure Container Apps).
+// `--once ingestion` or `--once forecast`: run one cycle and exit (the GitHub schedule, or Azure Container Apps jobs).
 // Without it: a long-running service with both loops (docker compose, local development).
 var once = builder.Configuration["once"];
 if (once is null)
@@ -22,28 +21,31 @@ if (once is null)
 using var host = builder.Build();
 var logger = host.Services.GetRequiredService<ILoggerFactory>().CreateLogger("PyroLens.Worker.Once");
 
+BackgroundJob job;
+switch (once)
+{
+    case "ingestion":
+        job = BackgroundJob.Ingestion;
+        break;
+    case "forecast":
+        job = BackgroundJob.Forecast;
+        break;
+    default:
+        logger.LogError("Unknown --once value '{Once}'. Use 'ingestion' or 'forecast'.", once);
+        return 2;
+}
+
 try
 {
     await host.Services.MigrateDatabaseAsync();
     await using var scope = host.Services.CreateAsyncScope();
 
-    switch (once)
-    {
-        case "ingestion":
-            await scope.ServiceProvider.GetRequiredService<IngestionService>().RunOnceAsync(CancellationToken.None);
-            break;
-        case "forecast":
-            var result = await scope.ServiceProvider.GetRequiredService<ForecastService>().RunOnceAsync(CancellationToken.None);
-            logger.LogInformation(
-                "Forecast: {Active} active incidents, {Written} forecasts written, {Skipped} skipped, {Deleted} old forecasts deleted",
-                result.ActiveIncidents, result.ForecastsWritten, result.Skipped, result.Deleted);
-            break;
-        default:
-            logger.LogError("Unknown --once value '{Once}'. Use 'ingestion' or 'forecast'.", once);
-            return 2;
-    }
+    // If the website (or another scheduled run) did this job in the last few minutes, there is nothing new to fetch.
+    var outcome = await scope.ServiceProvider.GetRequiredService<JobRunner>()
+        .RunAsync(job, "schedule", TimeSpan.FromMinutes(5), CancellationToken.None);
+    logger.LogInformation("{Job} cycle: {Outcome}", job, outcome);
 
-    return 0;
+    return outcome == JobOutcome.Failed ? 1 : 0;
 }
 catch (Exception ex)
 {

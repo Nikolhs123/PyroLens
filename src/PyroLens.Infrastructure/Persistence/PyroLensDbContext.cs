@@ -18,6 +18,7 @@ public sealed class PyroLensDbContext(DbContextOptions<PyroLensDbContext> option
     public DbSet<IncidentEvent> Events => Set<IncidentEvent>();
     public DbSet<Resource> Resources => Set<Resource>();
     public DbSet<AirspaceReservation> Airspace => Set<AirspaceReservation>();
+    public DbSet<JobRun> JobRuns => Set<JobRun>();
 
     /// <summary>Database spelling of an enum value: StatusChanged -> "status_changed".</summary>
     public static string ToSnakeCase<T>(T value) where T : struct, Enum =>
@@ -169,6 +170,17 @@ public sealed class PyroLensDbContext(DbContextOptions<PyroLensDbContext> option
             e.Property(x => x.ReservedBy).HasColumnName("reserved_by");
             e.Property(x => x.CreatedAt).HasColumnName("created_at");
             e.Property(x => x.CancelledAt).HasColumnName("cancelled_at");
+        });
+
+        model.Entity<JobRun>(e =>
+        {
+            e.ToTable("job_runs");
+            e.HasKey(x => x.Job);
+            e.Property(x => x.Job).HasColumnName("job");
+            e.Property(x => x.LastStartedAt).HasColumnName("last_started_at");
+            e.Property(x => x.LastStartedBy).HasColumnName("last_started_by");
+            e.Property(x => x.LastFinishedAt).HasColumnName("last_finished_at");
+            e.Property(x => x.LastSucceededAt).HasColumnName("last_succeeded_at");
         });
     }
 }

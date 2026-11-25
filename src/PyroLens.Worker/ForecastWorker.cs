@@ -1,6 +1,6 @@
 using Microsoft.Extensions.Options;
 using PyroLens.Infrastructure;
-using PyroLens.Infrastructure.Forecasting;
+using PyroLens.Infrastructure.Jobs;
 
 namespace PyroLens.Worker;
 
@@ -12,11 +12,6 @@ public sealed class ForecastWorker(IServiceProvider services, IOptions<ForecastO
 
     protected override TimeSpan InitialDelay => options.Value.InitialDelay;
 
-    protected override async Task RunCycleAsync(IServiceProvider scopedServices, CancellationToken ct)
-    {
-        var result = await scopedServices.GetRequiredService<ForecastService>().RunOnceAsync(ct);
-        logger.LogInformation(
-            "Forecast: {Active} active incidents, {Written} forecasts written, {Skipped} skipped, {Deleted} old forecasts deleted",
-            result.ActiveIncidents, result.ForecastsWritten, result.Skipped, result.Deleted);
-    }
+    protected override Task RunCycleAsync(IServiceProvider scopedServices, CancellationToken ct) =>
+        scopedServices.GetRequiredService<JobRunner>().RunAsync(BackgroundJob.Forecast, "worker", TimeSpan.Zero, ct);
 }

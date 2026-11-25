@@ -85,10 +85,25 @@ export interface Forecast {
   horizons: Horizon[];
 }
 
+/** Who starts a background job: the worker container, the GitHub schedule, or the website itself on a visit. */
+export type JobStarter = 'worker' | 'schedule' | 'website';
+
+export interface JobStatus {
+  /** When it last finished without failing: how fresh the data is. */
+  lastSucceededAt: string | null;
+  lastStartedAt: string;
+  lastStartedBy: JobStarter | string;
+  running: boolean;
+}
+
 export interface Status {
   lastDetectionIngestedAt: string | null;
   lastForecastIssuedAt: string | null;
   activeIncidents: number;
+  /** Fire data job; null until it has run once (or on an older server). */
+  ingestion: JobStatus | null;
+  /** Weather and forecast job. */
+  forecast: JobStatus | null;
 }
 
 export interface Resource {

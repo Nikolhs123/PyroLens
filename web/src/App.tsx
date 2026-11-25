@@ -1,14 +1,16 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from './api';
 import { FireDetail } from './components/FireDetail';
 import { FireList } from './components/FireList';
 import { Legend } from './components/Legend';
 import { MapView } from './components/MapView';
 import { SidebarHeader } from './components/SidebarHeader';
+import { dataStamp, needsAttention } from './freshness';
 import { type Theme, applyTheme, initialTheme } from './theme';
 import { usePolling } from './usePolling';
 
 const REFRESH_MS = 60_000;
+const BUSY_REFRESH_MS = 15_000;
 const OPS_REFRESH_MS = 15_000;
 const KEY_STORAGE = 'pyrolens.operatorKey';
 
@@ -38,7 +40,9 @@ export function App() {
   useEffect(() => applyTheme(theme), [theme]);
 
   const incidents = usePolling((s) => api.incidents(s), REFRESH_MS, 'incidents');
-  const status = usePolling((s) => api.status(s), REFRESH_MS, 'status');
+  // While a job is fetching new data (or the data is late and one should start soon), ask more often.
+  const [statusEvery, setStatusEvery] = useState(REFRESH_MS);
+  const status = usePolling((s) => api.status(s), statusEvery, 'status');
   const detections = usePolling((s) => api.detections(s), REFRESH_MS, 'detections', showPixels);
   const forecast = usePolling((s) => api.forecast(selectedId!, s), REFRESH_MS, selectedId, selectedId != null);
   const resources = usePolling((s) => api.resources(s), OPS_REFRESH_MS, 'resources');
@@ -49,6 +53,26 @@ export function App() {
   const selected = list.find((i) => i.id === selectedId) ?? null;
   // undefined = still loading, null = none yet (or the request failed), otherwise this fire's forecast.
   const selectedForecast = forecast.error != null ? null : forecast.data;
+
+  useEffect(() => {
+    setStatusEvery(needsAttention(status.data ?? undefined, Date.now()) ? BUSY_REFRESH_MS : REFRESH_MS);
+  }, [status.data]);
+
+  // New fire or weather data landed: fetch the lists now instead of waiting for their next round.
+  const stamp = status.data ? dataStamp(status.data) : null;
+  const lastStamp = useRef<string | null>(null);
+  const { reload: reloadIncidents } = incidents;
+  const { reload: reloadDetections } = detections;
+  const { reload: reloadForecast } = forecast;
+  useEffect(() => {
+    if (stamp == null) return;
+    if (lastStamp.current != null && lastStamp.current !== stamp) {
+      reloadIncidents();
+      reloadDetections();
+      reloadForecast();
+    }
+    lastStamp.current = stamp;
+  }, [stamp, reloadIncidents, reloadDetections, reloadForecast]);
 
   const toggle = useCallback((id: number) => setSelectedId((current) => (current === id ? null : id)), []);
 

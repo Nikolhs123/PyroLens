@@ -4,6 +4,7 @@ using Microsoft.Extensions.DependencyInjection;
 using PyroLens.Infrastructure.Firms;
 using PyroLens.Infrastructure.Forecasting;
 using PyroLens.Infrastructure.Ingestion;
+using PyroLens.Infrastructure.Jobs;
 using PyroLens.Infrastructure.Operations;
 using PyroLens.Infrastructure.Persistence;
 using PyroLens.Infrastructure.Weather;
@@ -42,6 +43,7 @@ public static class DependencyInjection
             }
         }));
         services.AddScoped<DatabaseMigrator>();
+        services.AddScoped<JobRunner>();
         services.AddSingleton(TimeProvider.System);
 
         services.AddOptions<DetectionFilterOptions>()

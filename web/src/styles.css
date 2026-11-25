@@ -75,6 +75,20 @@ button, input, select { font: inherit; color: inherit; }
 .lede { font-size: 15px; font-weight: 600; }
 .fresh { font-size: 13px; color: var(--muted); }
 .late { color: var(--held); }
+.fresh .busy { color: var(--ink-2); }
+.fresh .busy::before {
+  content: '';
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: var(--ok);
+  vertical-align: 1px;
+  animation: pulse 1.2s ease-in-out infinite;
+}
+@keyframes pulse { 50% { opacity: 0.25; } }
+@media (prefers-reduced-motion: reduce) { .fresh .busy::before { animation: none; } }
 
 .op { display: grid; gap: 8px; margin-top: 8px; }
 .op-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: 13.5px; color: var(--ink-2); }

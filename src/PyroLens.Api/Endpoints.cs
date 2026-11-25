@@ -8,6 +8,7 @@ using PyroLens.Core.Forecasting;
 using PyroLens.Core.Incidents;
 using PyroLens.Infrastructure;
 using PyroLens.Infrastructure.Ingestion;
+using PyroLens.Infrastructure.Jobs;
 using PyroLens.Infrastructure.Persistence;
 
 namespace PyroLens.Api;
@@ -82,7 +83,18 @@ public sealed record ForecastDto(
     string Attribution,
     IReadOnlyList<HorizonDto> Horizons);
 
-public sealed record StatusDto(DateTimeOffset? LastDetectionIngestedAt, DateTimeOffset? LastForecastIssuedAt, int ActiveIncidents);
+/// <param name="LastSucceededAt">When the job last finished without failing: how fresh the data is.</param>
+/// <param name="LastStartedBy">"worker", "schedule" (GitHub Actions) or "website" (the site itself, on a visit).</param>
+public sealed record JobStatusDto(DateTimeOffset? LastSucceededAt, DateTimeOffset LastStartedAt, string LastStartedBy, bool Running);
+
+/// <param name="Ingestion">The fire-data job; null until it has run once.</param>
+/// <param name="Forecast">The weather and forecast job; null until it has run once.</param>
+public sealed record StatusDto(
+    DateTimeOffset? LastDetectionIngestedAt,
+    DateTimeOffset? LastForecastIssuedAt,
+    int ActiveIncidents,
+    JobStatusDto? Ingestion,
+    JobStatusDto? Forecast);
 
 public static class Endpoints
 {
@@ -99,15 +111,24 @@ public static class Endpoints
         return api;
     }
 
-    /// <summary>When data last arrived, so a client can show how fresh the map is.</summary>
+    /// <summary>When data last arrived and whether a job is fetching more right now, so a client can show how fresh the map is.</summary>
     private static async Task<Ok<StatusDto>> GetStatus(PyroLensDbContext db, TimeProvider clock, CancellationToken ct)
     {
-        var since = clock.GetUtcNow().AddHours(-ActiveHours);
+        var now = clock.GetUtcNow();
+        var since = now.AddHours(-ActiveHours);
+        var runs = await db.JobRuns.AsNoTracking().ToDictionaryAsync(r => r.Job, ct);
+
+        JobStatusDto? Describe(BackgroundJob job) =>
+            runs.TryGetValue(JobRunner.Name(job), out var r)
+                ? new JobStatusDto(r.LastSucceededAt, r.LastStartedAt, r.LastStartedBy, r.IsRunning(now, JobRunner.StuckAfter))
+                : null;
 
         return TypedResults.Ok(new StatusDto(
             await db.Detections.MaxAsync(d => (DateTimeOffset?)d.IngestedAt, ct),
             await db.Forecasts.MaxAsync(f => (DateTimeOffset?)f.IssuedAt, ct),
-            await OnBoard(db.Incidents, since).CountAsync(ct)));
+            await OnBoard(db.Incidents, since).CountAsync(ct),
+            Describe(BackgroundJob.Ingestion),
+            Describe(BackgroundJob.Forecast)));
     }
 
     /// <summary>

@@ -17,7 +17,9 @@ builder.Services.ConfigureHttpJsonOptions(o =>
     o.SerializerOptions.Converters.Add(new GeoJsonConverterFactory());
 });
 builder.Services.AddProblemDetails();
+builder.Services.AddSingleton<DatabaseReadiness>();
 builder.Services.AddHostedService<DatabaseMigrationService>();
+var liveRefreshProblem = AddLiveRefresh(builder);
 builder.Services.AddHealthChecks()
     .AddCheck<DatabaseHealthCheck>("postgres", tags: ["ready"]);
 
@@ -31,6 +33,11 @@ builder.Services.AddRateLimiter(options =>
 });
 
 var app = builder.Build();
+
+if (liveRefreshProblem is not null)
+{
+    app.Logger.LogWarning("Live refresh is off: {Problem}", liveRefreshProblem);
+}
 
 app.UseExceptionHandler();
 app.UseStatusCodePages();
@@ -59,6 +66,29 @@ api.MapPyroLensEndpoints();
 api.MapOperationsEndpoints();
 
 app.Run();
+
+// The site runs the fire and weather jobs itself while awake (see LiveRefreshService). Only with real FIRMS data:
+// in File mode it would load the synthetic sample into the live database. Returns why it is off, if it was asked for.
+static string? AddLiveRefresh(WebApplicationBuilder builder)
+{
+    var refresh = builder.Configuration.GetSection(LiveRefreshOptions.Section).Get<LiveRefreshOptions>() ?? new LiveRefreshOptions();
+    if (!refresh.Enabled)
+    {
+        return null;
+    }
+
+    var firms = builder.Configuration.GetSection(FirmsOptions.Section).Get<FirmsOptions>() ?? new FirmsOptions();
+    if (firms.Mode != FirmsMode.Api || string.IsNullOrWhiteSpace(firms.MapKey))
+    {
+        return "LiveRefresh__Enabled is true, but it also needs Firms__Mode=Api and a Firms__MapKey.";
+    }
+
+    builder.Services.AddPyroLensIngestion(builder.Configuration);
+    builder.Services.AddPyroLensForecasting(builder.Configuration);
+    builder.Services.Configure<LiveRefreshOptions>(builder.Configuration.GetSection(LiveRefreshOptions.Section));
+    builder.Services.AddHostedService<LiveRefreshService>();
+    return null;
+}
 
 // Behind Render's proxy every request comes from the proxy; the first X-Forwarded-For entry is the client.
 static string ClientAddress(HttpContext http) =>

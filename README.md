@@ -207,7 +207,7 @@ npm run dev
 
 | Endpoint | Description |
 |---|---|
-| `GET /api/status` | When satellite data and forecasts last arrived, and how many incidents are active |
+| `GET /api/status` | When satellite data and forecasts last arrived, how many incidents are active, and for each job (`ingestion`, `forecast`) its last success, who started it last (`worker`, `schedule`, `website`) and whether it is running now |
 | `GET /api/incidents?hours=48&status=detected` | The board: incidents not closed that were detected in the last N hours or are being worked on, with footprint (GeoJSON), latest danger rating and allowed next statuses |
 | `GET /api/incidents/{id}` | One incident with its detections |
 | `GET /api/incidents/{id}/forecast` | Latest +1 h and +3 h forecast: weather, danger index and rating, spread rate, spread area as GeoJSON |
@@ -259,6 +259,9 @@ change gets 409; the timeline refuses `UPDATE` and `DELETE` (`restrict_violation
 blocks other incidents until it expires; **20 parallel reservations of one aircraft, exactly one winner**; suggestions in
 ETA order; overlapping airspace refused by the exclusion constraint, other band and adjacent windows allowed;
 **10 parallel overlapping airspace requests, exactly one winner**; closing an incident releases its units and airspace.
+Job runs: a run is recorded with who started it; a job is skipped until its gap has passed; a run still going is left
+alone until it looks stuck (15 minutes); a failed run keeps the last success; **10 processes starting the same job at
+once, exactly one runs it**.
 
 The unit tests check the FFDI equation and rating bands, spread rate, ellipse shape and orientation (a north wind pushes
 the fire south, the width is length / LB, a turning wind bends the direction) and both parsers on real responses.
@@ -292,17 +295,26 @@ builds the map, and builds both Docker images.
 | Part | Runs on | How |
 |---|---|---|
 | Database | [Supabase](https://supabase.com) free plan | PostgreSQL with PostGIS, reached through the session pooler (IPv4) |
-| Ingestion and forecasts | GitHub Actions ([`scheduled-jobs.yml`](.github/workflows/scheduled-jobs.yml)) | Runs the published worker image with `--once ingestion` every 10 minutes and `--once forecast` at :05 and :35 |
 | API and map | [Render](https://render.com) free web service ([`render.yaml`](render.yaml)) | Builds `src/PyroLens.Api/Dockerfile` and redeploys on every push to `main` |
+| Ingestion and forecasts, on a visit | The same Render service ([`LiveRefreshService`](src/PyroLens.Api/LiveRefreshService.cs)) | While the site is awake it fetches fires when they are 10 minutes old and weather when it is 30 minutes old |
+| Ingestion and forecasts, in between | GitHub Actions ([`scheduled-jobs.yml`](.github/workflows/scheduled-jobs.yml)) | Runs the published worker image with `--once ingestion` every 10 minutes and `--once forecast` at :05 and :35, as often as GitHub allows |
+
+**Why two ways to run the jobs:** GitHub's free schedules are best-effort. On a busy day they ran 4 times instead of
+about 200, so the site said its data was 7 hours old. Now the site fetches fresh data itself when someone opens it. Both
+paths go through [`JobRunner`](src/PyroLens.Infrastructure/Jobs/JobRunner.cs), which records every run in `job_runs`
+with one conditional `INSERT … ON CONFLICT DO UPDATE`. That way two processes never run the same job at once or right
+after each other, and the sidebar can say *"Satellites checked 3 min ago"* or *"Checking satellites now…"*.
 
 Secrets live only in the platforms: `DATABASE_URL` and `FIRMS_MAP_KEY` as GitHub repository secrets,
-`ConnectionStrings__PyroLens` as a Render environment variable. The app accepts the `postgresql://…` URL exactly as
+`ConnectionStrings__PyroLens` and `Firms__MapKey` as Render environment variables. The app accepts the `postgresql://…` URL exactly as
 Supabase shows it. Forecasts older than 7 days are deleted to stay well inside the 500 MB free database.
 The API starts even when the database is unreachable and reports it on `/health/ready`, so a bad setting never
-takes the map down.
+takes the map down. Without `Firms__MapKey` the site does not fetch anything itself (it never loads the sample file
+into a live database) and logs why.
 
-Limits of the free setup: the web service sleeps after 15 minutes without visitors, GitHub may start scheduled
-runs a few minutes late, and GitHub pauses schedules after 60 days without commits.
+Limits of the free setup: the web service sleeps after 15 minutes without visitors (the first visit then waits about a
+minute, and new data follows within another minute), GitHub runs schedules irregularly, and GitHub pauses schedules
+after 60 days without commits.
 
 ### Azure (prepared, not deployed)
 
@@ -339,7 +351,7 @@ from the Natural Earth file; see the script for the steps.
 | [Open-Meteo](https://open-meteo.com/) | Hourly temperature, humidity, wind | Free, no key, non-commercial use, fewer than 10,000 calls a day, CC BY 4.0 attribution. 57 incidents every 30 min is about 2,700 locations a day |
 | [CSIRO Spark model library](https://research.csiro.au/spark/resources/model-library/mcarthur) | McArthur Mk5 equations, length-to-breadth ratio, ellipse geometry | Published reference implementation |
 | EFFIS *(roadmap)* | Fire Weather Index | EFFIS terms of use |
-| [OpenFreeMap](https://openfreemap.org) | Dark vector map tiles | Free, no key, no usage limits; provided as-is. Map data © [OpenMapTiles](https://openmaptiles.org), © [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors (ODbL) |
+| [OpenFreeMap](https://openfreemap.org) | Vector map tiles, light and dark | Free, no key, no usage limits; provided as-is. Map data © [OpenMapTiles](https://openmaptiles.org), © [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors (ODbL) |
 
 Terms and limits change; check each provider before deploying.
 

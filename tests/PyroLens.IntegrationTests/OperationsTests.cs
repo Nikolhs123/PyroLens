@@ -288,13 +288,4 @@ public sealed class OperationsTests(PostgisFixture postgis)
             await Services.DisposeAsync();
         }
     }
-
-    private sealed class MutableClock(DateTimeOffset start) : TimeProvider
-    {
-        private DateTimeOffset _now = start;
-
-        public override DateTimeOffset GetUtcNow() => _now;
-
-        public void Advance(TimeSpan by) => _now += by;
-    }
 }

@@ -23,6 +23,7 @@ export function usePolling<T>(
   const loadRef = useRef(load);
   loadRef.current = load;
   const runRef = useRef<() => void>(() => {});
+  const keyRef = useRef(key);
 
   useEffect(() => {
     if (!enabled) return;
@@ -41,8 +42,11 @@ export function usePolling<T>(
     };
     runRef.current = () => void run();
 
-    // A new key (e.g. another incident) must never show the previous key's data.
-    setState({ data: undefined, error: null, updatedAt: null });
+    // A new key (e.g. another incident) must never show the previous key's data. A new interval keeps it.
+    if (keyRef.current !== key) {
+      keyRef.current = key;
+      setState({ data: undefined, error: null, updatedAt: null });
+    }
     void run();
     const timer = window.setInterval(run, intervalMs);
     return () => {

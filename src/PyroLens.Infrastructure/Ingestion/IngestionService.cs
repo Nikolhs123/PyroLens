@@ -4,7 +4,7 @@ using PyroLens.Infrastructure.Firms;
 namespace PyroLens.Infrastructure.Ingestion;
 
 public sealed record IngestionCycleResult(
-    int Received, int Inserted, int FlaggedIndustrial, int InsideArea, int FailedProducts, ClusteringResult Clustering);
+    int Products, int Received, int Inserted, int FlaggedIndustrial, int InsideArea, int FailedProducts, ClusteringResult Clustering);
 
 /// <summary>One ingestion cycle: fetch every FIRMS product, store new detections, then group them into incidents.</summary>
 public sealed class IngestionService(
@@ -15,10 +15,12 @@ public sealed class IngestionService(
 {
     public async Task<IngestionCycleResult> RunOnceAsync(CancellationToken ct)
     {
-        int received = 0, inserted = 0, flagged = 0, insideArea = 0, failed = 0;
+        int products = 0, received = 0, inserted = 0, flagged = 0, insideArea = 0, failed = 0;
 
         foreach (var product in source.Products)
         {
+            products++;
+
             // A failing product (timeout, bad key, outage) must not block the others.
             try
             {
@@ -46,6 +48,6 @@ public sealed class IngestionService(
             "Clustering: {Candidates} candidate detections, {Attached} joined open incidents, {NewIncidents} new incidents",
             clustering.Candidates, clustering.AttachedToExisting, clustering.NewIncidents);
 
-        return new IngestionCycleResult(received, inserted, flagged, insideArea, failed, clustering);
+        return new IngestionCycleResult(products, received, inserted, flagged, insideArea, failed, clustering);
     }
 }

@@ -60,6 +60,8 @@ Two ideas are worth holding on to from the start:
 
 - **The worker and the API never talk to each other.** They only share the database. The worker writes, the API
   reads (and writes dispatcher actions). That makes each simpler, and you can restart or scale one without the other.
+  (In the live demo the API can also run the worker's jobs itself; they still coordinate only through the database,
+  see [section 14](#14-cicd-and-the-live-deployment).)
 - **The web app is just files** (HTML, JavaScript, CSS). The API sends them to the browser like any web server, then
   the JavaScript running in the browser calls the API for data.
 
@@ -68,7 +70,7 @@ Where they run:
 | | On your computer | Live demo |
 |---|---|---|
 | Database | Docker container `db` | Supabase (free PostgreSQL) |
-| Worker | Docker container `worker`, running all the time | GitHub Actions, started on a schedule, runs one cycle and stops |
+| Worker jobs | Docker container `worker`, running all the time | The website itself while someone is visiting, plus GitHub Actions on a schedule (one cycle, then stop) |
 | API + web app | Docker container `api` on http://localhost:8080 | Render (free web hosting) |
 
 ## 2. A tour of the repository
@@ -319,6 +321,7 @@ The schema is plain SQL in numbered files in
 | `0002_areas_of_interest.sql` | The Greek border (+2 km), cut into pieces, and `fire_detections.area_code` |
 | `0003_incident_forecasts.sql` | `incident_forecasts` |
 | `0004_operations.sql` | `incident_events` (timeline), `resources` (fleet), `airspace_reservations` |
+| `0005_job_runs.sql` | `job_runs`: when each background job last started, finished and succeeded, and who started it |
 
 The files are compiled into the DLL (`<EmbeddedResource>` in the .csproj). On start-up,
 [`DatabaseMigrator.cs`](../src/PyroLens.Infrastructure/Persistence/DatabaseMigrator.cs):
@@ -411,7 +414,22 @@ in one transaction behind an advisory lock (so two workers never cluster at once
 **6. Repeat.** Locally, [`IngestionWorker`](../src/PyroLens.Worker/IngestionWorker.cs) runs this every 10 minutes
 through [`PeriodicWorker`](../src/PyroLens.Worker/PeriodicWorker.cs), which applies migrations first and keeps going
 if a cycle fails. In the live demo, [`Program.cs`](../src/PyroLens.Worker/Program.cs) is started with
-`--once ingestion`, runs one cycle and exits.
+`--once ingestion`, runs one cycle and exits, and the website runs the same cycle when it is due.
+
+Every one of those goes through [`JobRunner.cs`](../src/PyroLens.Infrastructure/Jobs/JobRunner.cs), which first
+*claims* the job in the `job_runs` table:
+
+```sql
+INSERT INTO job_runs AS j (job, last_started_at, last_started_by) VALUES ('ingestion', now, 'website')
+ON CONFLICT (job) DO UPDATE SET last_started_at = EXCLUDED.last_started_at, last_started_by = EXCLUDED.last_started_by
+    WHERE j.last_started_at <= now - gap                    -- long enough since the last run started
+      AND (j.last_finished_at >= j.last_started_at          -- and that run has finished
+           OR j.last_started_at <= now - interval '15 min') -- or it is clearly dead
+```
+
+If a row was inserted or updated, this process won and runs the cycle; if not, someone else ran it recently (or is
+running it) and it skips. It is the same idea as the optimistic updates in section 10: one statement, so PostgreSQL
+decides the race. When the cycle ends, the runner writes `last_finished_at`, and `last_succeeded_at` if it worked.
 
 ## 9. Phase 2: weather and spread forecasts
 
@@ -572,11 +590,19 @@ dotnet test tests/PyroLens.IntegrationTests        # Docker Desktop must be runn
 
 - **Supabase** runs PostgreSQL with PostGIS. The app connects through Supabase's *session pooler*, using the
   `postgresql://…` address exactly as Supabase shows it ([`ConnectionStrings.cs`](../src/PyroLens.Infrastructure/Persistence/ConnectionStrings.cs) converts it).
-- **GitHub Actions** ([`scheduled-jobs.yml`](../.github/workflows/scheduled-jobs.yml)) runs the worker image with
-  `--once ingestion` every 10 minutes and `--once forecast` at :05 and :35. Secrets `DATABASE_URL` and
-  `FIRMS_MAP_KEY` come from the repository's settings.
 - **Render** ([`render.yaml`](../render.yaml)) builds the API Dockerfile on every push to `main` and serves
-  https://pyrolens.onrender.com. Settings: `ConnectionStrings__PyroLens` (and optionally `Operator__Key`).
+  https://pyrolens.onrender.com. Settings: `ConnectionStrings__PyroLens`, `Firms__MapKey`, and optionally
+  `Operator__Key`.
+- **The website keeps itself fresh.** With `LiveRefresh__Enabled=true`,
+  [`LiveRefreshService.cs`](../src/PyroLens.Api/LiveRefreshService.cs) wakes up every minute and asks `JobRunner` to
+  run ingestion if it last started 10 minutes ago or more, and forecasts after 30. A free Render service sleeps after
+  15 minutes without visitors, so in practice this means *fetch new fires when someone opens the site*. The sidebar
+  polls `/api/status` every 15 seconds while a job runs, shows *"Checking satellites now…"*, and refetches the fires
+  the moment the run finishes.
+- **GitHub Actions** ([`scheduled-jobs.yml`](../.github/workflows/scheduled-jobs.yml)) runs the worker image with
+  `--once ingestion` every 10 minutes and `--once forecast` at :05 and :35, at least in theory: free schedules run when
+  GitHub has spare capacity, which can mean hours apart. It covers the time when nobody is visiting. Secrets
+  `DATABASE_URL` and `FIRMS_MAP_KEY` come from the repository's settings.
 
 **Azure (prepared, not running)**: [`deploy/azure/main.bicep`](../deploy/azure/main.bicep) describes the same system
 on Azure as code (a database with password-free sign-in through a managed identity, a Container App, two scheduled

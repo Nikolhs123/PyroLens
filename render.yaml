@@ -18,3 +18,12 @@ services:
       # Same Postgres URL as the DATABASE_URL GitHub secret; you paste it when creating the Blueprint.
       - key: ConnectionStrings__PyroLens
         sync: false
+      # While awake, the site fetches fires and weather itself when they are due (src/PyroLens.Api/LiveRefreshService.cs).
+      - key: LiveRefresh__Enabled
+        value: "true"
+      - key: Firms__Mode
+        value: Api
+      # Your NASA FIRMS key, the same value as the FIRMS_MAP_KEY GitHub secret. Add it in the service's Environment tab.
+      # Without it the site stays up and simply does not fetch data itself.
+      - key: Firms__MapKey
+        sync: false
