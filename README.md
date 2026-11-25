@@ -93,6 +93,25 @@ Every guarantee below is enforced by PostgreSQL, not by checks in application co
 Measured in the integration tests: **20 concurrent reservations of one aircraft → exactly 1 succeeds, 19 get 409**;
 **10 concurrent overlapping airspace requests → exactly 1 succeeds**.
 
+### Escalation rules: which fires need attention
+
+Four rules flag a fire, each with a level (*urgent* or *worth a look*) and the facts behind it:
+
+| Rule | When | Level |
+|---|---|---|
+| **No units** | Confirmed or active, and no unit on it for 20 minutes (the clock restarts when its last unit is released or it flares up) | Urgent |
+| **Burning again** | Marked contained, but satellites see new pixels after that | Urgent |
+| **Danger** | The +3 h forecast is *very high* or worse, or the rating rose since the previous forecast | Urgent / worth a look |
+| **Spreading** | 3 or more new satellite pixels in the last 6 hours | Worth a look |
+
+The rules are a pure function in [`Attention.cs`](src/PyroLens.Core/Incidents/Attention.cs), fed by one SQL query
+([`AttentionService.cs`](src/PyroLens.Infrastructure/Operations/AttentionService.cs)) that reads pixels, forecasts,
+units and the append-only timeline. They run on every read, so they need no job and no extra table: a flag appears the
+moment its condition holds and goes away by itself once a unit is sent or the danger drops. Thresholds are settings
+(`Attention__NoUnitsAfter`, `Attention__SpreadingPixels`, `Attention__SpreadingWindow`). Flagged fires are listed
+first under *Needs attention* with their main reason (*"No units sent for 34 min"*), get a red or amber ring on the
+map, and show every reason on their page.
+
 ### The web app
 
 A React + TypeScript app (Vite, MapLibre GL, OpenFreeMap vector tiles, Public Sans), built into the API image and
@@ -101,7 +120,8 @@ served at `/`. It is written to be read by a person, not decoded:
 - **Light and dark**: follows the system setting until you pick one with the sun/moon button; the map switches
   between OpenFreeMap's "liberty" and "dark" styles and keeps every overlay.
 - **Fires named after places**: each fire is described from the nearest of about 90 Greek towns, e.g.
-  *"9 km southwest of Feres"*, grouped by status (active, confirmed, contained, new detections), with the danger word
+  *"9 km southwest of Feres"*. Fires that trip an escalation rule come first under *Needs attention* with the reason;
+  the rest are grouped by status (active, confirmed, contained, new detections), with the danger word
   and how long ago it was last seen. The header says how fresh the satellite and weather data are, and flags it as late
   when the scheduled jobs fall behind.
 - **One fire**: a one-sentence summary (*"Low fire danger. Wind 8 km/h from the south could carry it about 124 m north
@@ -208,7 +228,7 @@ npm run dev
 | Endpoint | Description |
 |---|---|
 | `GET /api/status` | When satellite data and forecasts last arrived, how many incidents are active, and for each job (`ingestion`, `forecast`) its last success, who started it last (`worker`, `schedule`, `website`) and whether it is running now |
-| `GET /api/incidents?hours=48&status=detected` | The board: incidents not closed that were detected in the last N hours or are being worked on, with footprint (GeoJSON), latest danger rating and allowed next statuses |
+| `GET /api/incidents?hours=48&status=detected` | The board: incidents not closed that were detected in the last N hours or are being worked on, with footprint (GeoJSON), latest danger rating, allowed next statuses, and `attention`: the escalation rules it trips right now (`rule`, `level`, and `since` / `pixels` / `from` / `to`) |
 | `GET /api/incidents/{id}` | One incident with its detections |
 | `GET /api/incidents/{id}/forecast` | Latest +1 h and +3 h forecast: weather, danger index and rating, spread rate, spread area as GeoJSON |
 | `GET /api/incidents/{id}/events` | The incident's timeline |
@@ -262,6 +282,9 @@ ETA order; overlapping airspace refused by the exclusion constraint, other band 
 Job runs: a run is recorded with who started it; a job is skipped until its gap has passed; a run still going is left
 alone until it looks stuck (15 minutes); a failed run keeps the last success; **10 processes starting the same job at
 once, exactly one runs it**.
+Escalation rules: every rule and boundary as unit tests (19 vs 20 minutes, 2 vs 3 pixels, falling danger), and on real
+data: the sample's spreading fires, *no units* through confirm → send → release, a contained fire that gets a new pixel,
+and danger rising between two forecasts.
 
 The unit tests check the FFDI equation and rating bands, spread rate, ellipse shape and orientation (a north wind pushes
 the fire south, the width is length / LB, a turning wind bends the direction) and both parsers on real responses.
@@ -281,7 +304,8 @@ builds the map, and builds both Docker images.
 - [x] **Incident lifecycle**: state machine from *Detected* to *Closed*, append-only timeline, optimistic 409 on races
 - [x] **Resources**: simulated fleet, suggestions by ETA, expiring reservations and atomic assignment (`409 Conflict` on races)
 - [x] **Airspace**: zone and time-window reservations enforced by a PostgreSQL exclusion constraint on `tstzrange`
-- [ ] **Escalation rules**: flag incidents that grow, worsen in danger band or have no units after N minutes
+- [x] **Escalation rules**: flag incidents that spread, burn again after containment, worsen in danger band or have no units after N minutes
+- [x] **Fresh live data**: the site runs the jobs itself while someone is visiting; `job_runs` keeps every runner from repeating another's work
 - [ ] **LLM assistant**: incident summaries and draft announcements with structured output, fallback and human approval
 - [ ] **Citizens**: public map served from cache, report form, radius-based alerts through a queue with dead-lettering
 - [ ] **Scale**: k6 load tests (telemetry ingest, public map peak, resource races, airspace overlap) with before/after numbers

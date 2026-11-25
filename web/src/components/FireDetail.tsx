@@ -8,9 +8,11 @@ import {
   type TimelineEvent,
   actions,
 } from '../api';
+import { attentionLevel, describeAttention, sortAttention } from '../attention';
 import { formatCoordinates, localStamp, relativeTime } from '../format';
 import { ACTION_LABEL, STATUS, forecastSentence } from '../operations';
 import { describePlace, nearestPlace } from '../places';
+import { useNow } from '../usePolling';
 import { AirspaceTab } from './AirspaceTab';
 import { ForecastTab } from './ForecastTab';
 import { Icon } from './Icon';
@@ -38,6 +40,7 @@ export function FireDetail({ incident, forecast, resources, airspace, timeline, 
   const [tab, setTab] = useState<Tab>('forecast');
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
+  const now = useNow(30_000);
 
   // Another fire starts clean.
   useEffect(() => setMessage(null), [incident.id]);
@@ -56,7 +59,9 @@ export function FireDetail({ incident, forecast, resources, airspace, timeline, 
   };
 
   const place = nearestPlace(incident.latitude, incident.longitude);
-  const units = resources.filter((r) => r.incidentId === incident.id).length;
+  const reasons = sortAttention(incident.attention ?? []);
+  const level = attentionLevel(incident);
+  const units =resources.filter((r) => r.incidentId === incident.id).length;
   const reservations = airspace.filter((a) => a.incidentId === incident.id).length;
   const tabs: { id: Tab; label: string; count?: number }[] = [
     { id: 'forecast', label: 'Forecast' },
@@ -86,6 +91,19 @@ export function FireDetail({ incident, forecast, resources, airspace, timeline, 
         </p>
         <p className="coords">{formatCoordinates(incident.latitude, incident.longitude)}</p>
       </header>
+
+      {reasons.length > 0 && (
+        <section className={level === 'urgent' ? 'attention' : 'attention watch'} aria-labelledby="attention-title">
+          <h3 id="attention-title" className="attention-title">
+            {level === 'urgent' ? 'Needs attention now' : 'Worth a look'}
+          </h3>
+          <ul>
+            {reasons.map((a) => (
+              <li key={a.rule}>{describeAttention(a, now)}</li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       <p className="summary">{forecast === undefined ? 'Loading the forecast…' : forecastSentence(forecast)}</p>
 

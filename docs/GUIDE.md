@@ -491,6 +491,30 @@ Read it as: *no two live rows may have the same level AND overlapping areas AND 
 checks it on every insert, even under heavy concurrency. The code simply tries the insert and, if PostgreSQL answers
 with error code `23P01`, finds the reservation in the way and returns a 409 that names it.
 
+**Escalation rules** (which fires need attention) show a different design choice: *compute on read* instead of
+storing anything. The rules are a pure function in [`Attention.cs`](../src/PyroLens.Core/Incidents/Attention.cs):
+
+```csharp
+AttentionRules.Evaluate(facts, now, settings)   // → a list like [NoUnits since 10:02, Spreading 6 pixels in 6 h]
+```
+
+`facts` is one record per incident (pixels in the last 6 h, pixels since it was contained, the last two forecast
+ratings, units on it, when a dispatcher took it on, when its last unit was released). One SQL query in
+[`AttentionService.cs`](../src/PyroLens.Infrastructure/Operations/AttentionService.cs) gathers it for the whole board;
+the interesting part is reading the timeline with `max(...) FILTER (WHERE ...)`:
+
+```sql
+SELECT max(e.occurred_at) FILTER (WHERE e.type = 'status_changed' AND e.to_status = 'contained') AS contained_at,
+       max(e.occurred_at) FILTER (WHERE e.type = 'resource_released')                            AS last_released_at
+FROM incident_events e WHERE e.incident_id = i.id
+```
+
+Because nothing is stored, a flag can never get stale: *"no units for 20 minutes"* appears at exactly 20 minutes and
+disappears the moment a unit is sent. The cost is one extra query per board load, which is cheap with the indexes on
+`incident_id`. Keeping the rules apart from the SQL means they are tested in milliseconds
+([`AttentionRulesTests.cs`](../tests/PyroLens.UnitTests/AttentionRulesTests.cs)), and the query separately on real data
+([`AttentionTests.cs`](../tests/PyroLens.IntegrationTests/AttentionTests.cs)).
+
 ## 11. The API
 
 [`Program.cs`](../src/PyroLens.Api/Program.cs) builds the web server in a few steps: register services, configure
@@ -624,6 +648,9 @@ Each takes 10–30 minutes and touches a different part.
    `UPDATE incident_events SET actor = 'me';` and read the error.
 7. **Docker.** Run `docker compose stop db`, open the site, then `docker compose start db`. What do
    `/health/live` and `/health/ready` say in each state?
+8. **A new escalation rule.** Add `Intense` to `AttentionRule`: a fire whose strongest pixel (`MaxFrpMegawatts`) is over
+   100 MW. Add the fact to `AttentionFacts`, the column to the query in `AttentionService`, a case in `Evaluate`, a unit
+   test, and a sentence in `web/src/attention.ts`. Which of those would the compiler remind you of?
 
 ## 16. Glossary
 

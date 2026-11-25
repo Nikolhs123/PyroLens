@@ -37,6 +37,8 @@ export interface Incident {
   /** Allowed next statuses, from the server's lifecycle rules. */
   nextStatuses: IncidentStatus[];
   acceptsResources: boolean;
+  /** Why it needs attention right now; empty when it does not (missing on older servers). */
+  attention?: Attention[];
 }
 
 export interface Detection {
@@ -83,6 +85,21 @@ export interface Forecast {
   disclaimer: string;
   attribution: string;
   horizons: Horizon[];
+}
+
+export type AttentionRule = 'noUnits' | 'spreading' | 'burningAgain' | 'danger';
+export type AttentionLevel = 'watch' | 'urgent';
+
+/** One reason a fire needs a dispatcher's attention (escalation rules). Only the fields its rule uses are set. */
+export interface Attention {
+  rule: AttentionRule;
+  level: AttentionLevel;
+  /** noUnits: since when no unit has been on it. burningAgain: when it was marked contained. */
+  since: string | null;
+  pixels: number | null;
+  withinHours: number | null;
+  from: DangerRating | null;
+  to: DangerRating | null;
 }
 
 /** Who starts a background job: the worker container, the GitHub schedule, or the website itself on a visit. */

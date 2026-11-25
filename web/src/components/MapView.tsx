@@ -2,6 +2,7 @@ import type { Feature, FeatureCollection, Point } from 'geojson';
 import maplibregl, { type GeoJSONSource, type LngLatBoundsLike, type Map as MapLibreMap } from 'maplibre-gl';
 import { useEffect, useRef, useState } from 'react';
 import type { AirspaceReservation, Detection, Forecast, Incident, Resource } from '../api';
+import { ATTENTION_COLORS, attentionLevel, describeAttention, sortAttention } from '../attention';
 import { bboxOf, padBBox } from '../geo';
 import { describePlace, nearestPlace } from '../places';
 import { ratingStyle } from '../ratings';
@@ -127,6 +128,7 @@ export function MapView({ incidents, detections, selected, forecast, resources, 
 
     const points: Feature<Point>[] = incidents.map((i) => {
       const style = ratingStyle(i);
+      const reason = sortAttention(i.attention ?? [])[0];
       return {
         type: 'Feature',
         geometry: { type: 'Point', coordinates: [i.longitude, i.latitude] },
@@ -135,7 +137,10 @@ export function MapView({ incidents, detections, selected, forecast, resources, 
           color: style.color,
           radius: radiusFor(i),
           selected: i.id === selected?.id,
-          label: `${capitalise(describePlace(nearestPlace(i.latitude, i.longitude)))} · ${style.short} danger`,
+          attention: attentionLevel(i) ?? 'none',
+          label:
+            `${capitalise(describePlace(nearestPlace(i.latitude, i.longitude)))} · ${style.short} danger` +
+            (reason ? ` · ${describeAttention(reason)}` : ''),
         },
       };
     });
@@ -357,6 +362,19 @@ function addLayers(map: MapLibreMap, theme: Theme) {
     type: 'circle',
     source: 'pixels',
     paint: { 'circle-radius': 2.5, 'circle-color': PIXEL_COLOR, 'circle-opacity': 0.9 },
+  });
+  // Fires that need attention: a red (urgent) or amber (watch) ring just outside the marker.
+  map.addLayer({
+    id: 'incidents-attention',
+    type: 'circle',
+    source: 'incidents',
+    filter: ['!=', ['get', 'attention'], 'none'],
+    paint: {
+      'circle-radius': ['+', ['get', 'radius'], 2],
+      'circle-color': 'rgba(0, 0, 0, 0)',
+      'circle-stroke-color': ['match', ['get', 'attention'], 'urgent', ATTENTION_COLORS.urgent, ATTENTION_COLORS.watch],
+      'circle-stroke-width': 2.5,
+    },
   });
   map.addLayer({
     id: 'incidents-selected',

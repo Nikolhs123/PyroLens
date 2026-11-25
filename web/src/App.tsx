@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from './api';
+import { attentionLevel } from './attention';
 import { FireDetail } from './components/FireDetail';
 import { FireList } from './components/FireList';
 import { Legend } from './components/Legend';
@@ -155,7 +156,13 @@ export function App() {
           onSelect={toggle}
         />
         <div className="map-overlay">
-          <Legend selected={selected} showAirspace={liveAirspace.length > 0} showPixels={showPixels} onTogglePixels={setShowPixels} />
+          <Legend
+            selected={selected}
+            showAirspace={liveAirspace.length > 0}
+            showAttention={list.some((i) => attentionLevel(i) != null)}
+            showPixels={showPixels}
+            onTogglePixels={setShowPixels}
+          />
         </div>
       </main>
     </div>

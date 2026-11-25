@@ -9,6 +9,7 @@ using PyroLens.Core.Incidents;
 using PyroLens.Infrastructure;
 using PyroLens.Infrastructure.Ingestion;
 using PyroLens.Infrastructure.Jobs;
+using PyroLens.Infrastructure.Operations;
 using PyroLens.Infrastructure.Persistence;
 
 namespace PyroLens.Api;
@@ -24,6 +25,7 @@ public sealed record ForecastSummaryDto(
 /// <param name="Footprint">GeoJSON geometry of the detections' convex hull: a Point, LineString or Polygon.</param>
 /// <param name="NextStatuses">Statuses the incident may move to, from the lifecycle rules, so clients need no copy of them.</param>
 /// <param name="AcceptsResources">Whether units and airspace can be committed in the current status.</param>
+/// <param name="Attention">Why the fire needs a dispatcher's attention right now (escalation rules); empty when it does not.</param>
 public sealed record IncidentDto(
     long Id,
     IncidentStatus Status,
@@ -36,7 +38,8 @@ public sealed record IncidentDto(
     Geometry? Footprint,
     ForecastSummaryDto? Forecast,
     IReadOnlyList<IncidentStatus> NextStatuses,
-    bool AcceptsResources);
+    bool AcceptsResources,
+    IReadOnlyList<Attention> Attention);
 
 public sealed record DetectionDto(
     long Id,
@@ -137,7 +140,7 @@ public static class Endpoints
     /// <c>?status=closed</c> lists recently closed incidents instead.
     /// </summary>
     private static async Task<Results<Ok<List<IncidentDto>>, ValidationProblem>> ListIncidents(
-        PyroLensDbContext db, TimeProvider clock, CancellationToken ct, int hours = ActiveHours, IncidentStatus? status = null)
+        PyroLensDbContext db, AttentionService attention, TimeProvider clock, CancellationToken ct, int hours = ActiveHours, IncidentStatus? status = null)
     {
         if (hours is < 1 or > MaxHours)
         {
@@ -154,12 +157,15 @@ public static class Endpoints
         }
 
         var incidents = await query.OrderByDescending(i => i.LastDetectedAt).ToListAsync(ct);
-        var forecasts = await LatestForecastSummariesAsync(db, incidents.Select(i => i.Id).ToList(), ct);
+        var ids = incidents.Select(i => i.Id).ToList();
+        var forecasts = await LatestForecastSummariesAsync(db, ids, ct);
+        var flags = await attention.EvaluateAsync(ids, ct);
 
-        return TypedResults.Ok(incidents.Select(i => ToDto(i, forecasts.GetValueOrDefault(i.Id))).ToList());
+        return TypedResults.Ok(incidents.Select(i => ToDto(i, forecasts.GetValueOrDefault(i.Id), flags.GetValueOrDefault(i.Id))).ToList());
     }
 
-    private static async Task<Results<Ok<IncidentDetailDto>, NotFound>> GetIncident(long id, PyroLensDbContext db, CancellationToken ct)
+    private static async Task<Results<Ok<IncidentDetailDto>, NotFound>> GetIncident(
+        long id, PyroLensDbContext db, AttentionService attention, CancellationToken ct)
     {
         var incident = await db.Incidents.AsNoTracking().SingleOrDefaultAsync(i => i.Id == id, ct);
         if (incident is null)
@@ -168,13 +174,14 @@ public static class Endpoints
         }
 
         var forecasts = await LatestForecastSummariesAsync(db, [id], ct);
+        var flags = await attention.EvaluateAsync([id], ct);
         var detections = await db.Detections.AsNoTracking()
             .Where(d => d.IncidentId == id)
             .OrderBy(d => d.AcquiredAt)
             .Select(ToDetectionDto)
             .ToListAsync(ct);
 
-        return TypedResults.Ok(new IncidentDetailDto(ToDto(incident, forecasts.GetValueOrDefault(id)), detections));
+        return TypedResults.Ok(new IncidentDetailDto(ToDto(incident, forecasts.GetValueOrDefault(id), flags.GetValueOrDefault(id)), detections));
     }
 
     /// <summary>Latest spread forecast of an incident: one entry per horizon (+1 h, +3 h).</summary>
@@ -306,9 +313,9 @@ public static class Endpoints
                              (i.LastDetectedAt >= since ||
                               i.Status == IncidentStatus.Confirmed || i.Status == IncidentStatus.Active || i.Status == IncidentStatus.Contained));
 
-    private static IncidentDto ToDto(Incident i, ForecastSummaryDto? forecast) => new(
+    private static IncidentDto ToDto(Incident i, ForecastSummaryDto? forecast, IReadOnlyList<Attention>? attention) => new(
         i.Id, i.Status, i.Centroid.Y, i.Centroid.X, i.FirstDetectedAt, i.LastDetectedAt, i.DetectionCount, i.MaxFrpMegawatts,
-        i.Footprint, forecast, IncidentLifecycle.NextStatuses(i.Status), IncidentLifecycle.AcceptsResources(i.Status));
+        i.Footprint, forecast, IncidentLifecycle.NextStatuses(i.Status), IncidentLifecycle.AcceptsResources(i.Status), attention ?? []);
 
     private static readonly System.Linq.Expressions.Expression<Func<FireDetection, DetectionDto>> ToDetectionDto = d => new DetectionDto(
         d.Id, d.Source, d.Instrument, d.Latitude, d.Longitude, d.AcquiredAt, d.ConfidenceRaw, d.FrpMegawatts, d.LikelyIndustrial, d.AreaCode, d.IncidentId);

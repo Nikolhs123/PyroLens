@@ -65,6 +65,10 @@ public static class DependencyInjection
         services.AddScoped<ResourceOperations>();
         services.AddScoped<AirspaceOperations>();
 
+        // Escalation rules: which fires need a dispatcher's attention, and why.
+        services.AddOptions<AttentionOptions>().Bind(configuration.GetSection(AttentionOptions.Section)).ValidateDataAnnotations();
+        services.AddScoped<AttentionService>();
+
         return services;
     }
 

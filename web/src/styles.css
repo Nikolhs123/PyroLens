@@ -19,6 +19,7 @@
   --held: #8f5f00;
   --problem: #a83b12;
   --problem-bg: #fdf1ea;
+  --held-bg: #fbf4e2;
   --ok-bg: #eef7f1;
   --focus: #1f5fa6;
   --sans: "Public Sans", "Segoe UI", system-ui, sans-serif;
@@ -43,6 +44,7 @@
   --held: #e2b04a;
   --problem: #f29a6b;
   --problem-bg: #2a1e17;
+  --held-bg: #2a2414;
   --ok-bg: #16261d;
   --focus: #8cb9ee;
   color-scheme: dark;
@@ -140,6 +142,22 @@ button, input, select { font: inherit; color: inherit; }
 .fire-sub { font-size: 13px; color: var(--muted); }
 .fire-danger { font-size: 13px; color: var(--ink-2); flex: none; }
 .empty { padding: 24px 20px; display: grid; gap: 6px; }
+
+/* Needs attention: a coloured edge on the row, and the reason in place of the usual details. */
+.fire-row.flagged { box-shadow: inset 3px 0 0 var(--edge); }
+.fire-row.urgent { --edge: var(--problem); }
+.fire-row.watch { --edge: var(--held); }
+.fire-reason { font-size: 13px; color: var(--ink); }
+.fire-row.urgent .fire-reason { color: var(--problem); }
+.fire-more { color: var(--muted); }
+
+/* Reasons on one fire's page. */
+.attention { border-radius: 6px; padding: 10px 12px; background: var(--problem-bg); display: grid; gap: 4px; }
+.attention.watch { background: var(--held-bg); }
+.attention-title { font-size: 13px; font-weight: 600; color: var(--problem); }
+.attention.watch .attention-title { color: var(--held); }
+.attention ul { display: grid; gap: 3px; padding-left: 18px; font-size: 14px; color: var(--ink); }
+.attention li::marker { color: var(--faint); }
 
 /* ---------- One fire ---------- */
 .detail { padding: 14px 20px 24px; display: grid; gap: 14px; }
