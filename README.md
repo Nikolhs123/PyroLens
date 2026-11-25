@@ -15,7 +15,7 @@ and (on the roadmap) helps a dispatcher coordinate resources, airspace and publi
 ![Tests](https://img.shields.io/badge/tests-xUnit%20%2B%20Testcontainers-success)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-**[Live demo → pyrolens.onrender.com](https://pyrolens.onrender.com)**
+**[Live demo → pyrolens.onrender.com](https://pyrolens.onrender.com)** · **[How it works: a guided tour of the code →](docs/GUIDE.md)**
 <sub>Free hosting: the first visit after a quiet period can take up to a minute while the server wakes up.</sub>
 
 </div>
@@ -27,7 +27,10 @@ and (on the roadmap) helps a dispatcher coordinate resources, airspace and publi
 ---
 
 <p align="center">
-  <img src="docs/console.jpg" alt="PyroLens operations console: incident table, incident 35 with fire danger index 3.2, wind from the east, and its burning area with +1 h and +3 h spread outlines on a dark map" width="800">
+  <img src="docs/screenshot-light.jpg" alt="PyroLens in light mode: a sidebar listing 52 fires in Greece, each named after the nearest town, next to a map of Greece with a dot per fire" width="800">
+</p>
+<p align="center">
+  <img src="docs/screenshot-dark.jpg" alt="PyroLens in dark mode: the fire 22 km northeast of Megara with its forecast tab, and its burning area with +1 h and +3 h spread outlines on a dark map" width="800">
 </p>
 
 ## The problem
@@ -90,24 +93,28 @@ Every guarantee below is enforced by PostgreSQL, not by checks in application co
 Measured in the integration tests: **20 concurrent reservations of one aircraft → exactly 1 succeeds, 19 get 409**;
 **10 concurrent overlapping airspace requests → exactly 1 succeeds**.
 
-### Operations console
+### The web app
 
-A React + TypeScript app (Vite, MapLibre GL, OpenFreeMap dark vector tiles, IBM Plex), built into the API image
-and served at `/`. It is laid out like a dispatch screen rather than a website:
+A React + TypeScript app (Vite, MapLibre GL, OpenFreeMap vector tiles, Public Sans), built into the API image and
+served at `/`. It is written to be read by a person, not decoded:
 
-- **Status strip**: UTC clock, age of the latest satellite data (`FIRMS`) and weather forecasts (`WX`), turning amber
-  and red when the scheduled jobs fall behind, active incident count and API link state.
-- **Incident table**: ID, danger band (`LM` `H` `VH` `S` `E` `C`), satellite pixels, strongest pixel (MW) and time
-  since last seen; sortable by every column, driven from the keyboard (`↑` `↓` select, `Esc` clear, `P` pixel layer).
-- **Detail panel**: status with the allowed next steps, then four tabs. *Forecast*: fire danger index and band, wind
-  arrow, temperature, humidity, head run, rate of spread and direction for +1 h and +3 h. *Units*: committed units with a
-  live hold countdown, and the nearest free units by ETA. *Airspace*: reservations and a form for new ones. *Log*: the
-  timeline. Conflicts come back as the server's own sentence, e.g. "High (aircraft) airspace there is already reserved
-  23:07–01:07 UTC by reservation 1".
-- **Operator mode**: `READ-ONLY` in the status strip until the operator key is entered (kept for the browser tab only).
-- **Map**: markers coloured by danger band and sized by pixels; the selected incident's burning area, +1 h area and
-  dashed +3 h outline, its units with lines from their bases; airspace circles (cyan low, violet high); optional raw
-  pixels of the last 24 h. Refreshes every minute (units and airspace every 15 s); on phones the map sits above the table.
+- **Light and dark**: follows the system setting until you pick one with the sun/moon button; the map switches
+  between OpenFreeMap's "liberty" and "dark" styles and keeps every overlay.
+- **Fires named after places**: each fire is described from the nearest of about 90 Greek towns, e.g.
+  *"9 km southwest of Feres"*, grouped by status (active, confirmed, contained, new detections), with the danger word
+  and how long ago it was last seen. The header says how fresh the satellite and weather data are, and flags it as late
+  when the scheduled jobs fall behind.
+- **One fire**: a one-sentence summary (*"Low fire danger. Wind 8 km/h from the south could carry it about 124 m north
+  within 3 hours."*), the allowed next steps, then four tabs. *Forecast*: danger, wind, temperature, humidity and the
+  +1 h / +3 h runs. *Units*: units on this fire with a live hold countdown, and the closest free ones by travel time.
+  *Airspace*: reservations and a form for new ones. *Log*: the timeline as sentences (*"Nick sent AIR-01."*). Conflicts
+  come back as the server's own sentence, e.g. "High (aircraft) airspace there is already reserved 23:07–01:07 UTC by
+  reservation 1".
+- **Operator mode**: view only until the operator key is entered (kept for the browser tab only).
+- **Map**: dots coloured by danger and sized by pixels; the selected fire's burning area, +1 h area and +3 h outline,
+  its units with lines from their bases; airspace circles (teal low, violet high); optional raw pixels of the last 24 h.
+  Refreshes every minute (units and airspace every 15 s). Keyboard: `Esc` back to the list, `P` pixel layer. On phones
+  the map sits above the list.
 
 ## Architecture
 
@@ -141,7 +148,9 @@ flowchart LR
 | `PyroLens.Infrastructure` | Schema and migrations, FIRMS and Open-Meteo clients, batch writer, clustering, forecasts |
 | `PyroLens.Worker` | Two background loops: ingestion every 10 min, forecasts every 30 min |
 | `PyroLens.Api` | REST endpoints (geometries as GeoJSON), health checks, serves the map |
-| `web/` | React + TypeScript operations console (Vite, MapLibre GL), with Vitest tests |
+| `web/` | React + TypeScript web app (Vite, MapLibre GL), with Vitest tests |
+
+New to Docker, PostGIS or this codebase? **[docs/GUIDE.md](docs/GUIDE.md)** walks through every part, in the order the data flows.
 
 <details>
 <summary><b>How clustering works</b></summary>
@@ -242,7 +251,7 @@ Dispatcher actions (header `X-Operator-Key`; 401 without it, 403 when the server
 ```bash
 dotnet test tests/PyroLens.UnitTests          # parsers, fire danger and spread math, lifecycle rules, ETAs
 dotnet test tests/PyroLens.IntegrationTests   # real SQL on postgis/postgis via Testcontainers (needs Docker)
-cd web && npm test                            # console logic: sorting, rating counts, countdowns, log lines, times
+cd web && npm test                            # web app logic: sorting, town names, sentences, countdowns, times
 ```
 
 **Phase 3 integration tests** run against PostGIS with a controllable clock: status changes and their timeline; a stale
