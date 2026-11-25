@@ -8,9 +8,9 @@ import './styles.css';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App';
+import { PublicApp } from './public/PublicApp';
 
-createRoot(document.getElementById('root')!).render(
-  <StrictMode>
-    <App />
-  </StrictMode>,
-);
+// One web app, two pages: /public for everyone, / for dispatchers. The server sends index.html for both.
+const isPublic = window.location.pathname === '/public' || window.location.pathname.startsWith('/public/');
+
+createRoot(document.getElementById('root')!).render(<StrictMode>{isPublic ? <PublicApp /> : <App />}</StrictMode>);

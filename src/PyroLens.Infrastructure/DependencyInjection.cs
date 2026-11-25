@@ -7,6 +7,7 @@ using PyroLens.Infrastructure.Ingestion;
 using PyroLens.Infrastructure.Jobs;
 using PyroLens.Infrastructure.Operations;
 using PyroLens.Infrastructure.Persistence;
+using PyroLens.Infrastructure.Reports;
 using PyroLens.Infrastructure.Weather;
 
 namespace PyroLens.Infrastructure;
@@ -68,6 +69,9 @@ public static class DependencyInjection
         // Escalation rules: which fires need a dispatcher's attention, and why.
         services.AddOptions<AttentionOptions>().Bind(configuration.GetSection(AttentionOptions.Section)).ValidateDataAnnotations();
         services.AddScoped<AttentionService>();
+
+        // Reports from the public.
+        services.AddScoped<ReportService>();
 
         return services;
     }

@@ -107,7 +107,7 @@ public static class OperationsEndpoints
         ToResult(await airspace.CancelAsync(id, Actor(http), ct), ToDto);
 
     /// <summary>Who acted, for the timeline: the optional X-Operator-Name header, else "operator".</summary>
-    private static string Actor(HttpContext http)
+    internal static string Actor(HttpContext http)
     {
         var name = new string(http.Request.Headers["X-Operator-Name"].ToString()
             .Where(c => char.IsLetterOrDigit(c) || c is ' ' or '-' or '_' or '.').ToArray()).Trim();
@@ -153,8 +153,7 @@ public sealed class OperatorKeyFilter(IOptions<OperatorOptions> options) : IEndp
                 statusCode: StatusCodes.Status403Forbidden);
         }
 
-        var given = context.HttpContext.Request.Headers[Header].ToString();
-        if (!CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(given), Encoding.UTF8.GetBytes(key)))
+        if (!IsValid(context.HttpContext, key))
         {
             return TypedResults.Problem(
                 title: "Operator key required",
@@ -163,5 +162,17 @@ public sealed class OperatorKeyFilter(IOptions<OperatorOptions> options) : IEndp
         }
 
         return await next(context);
+    }
+
+    /// <summary>Whether the request carries the configured key. Constant time, so the response time reveals nothing.</summary>
+    public static bool IsValid(HttpContext http, string? key)
+    {
+        if (string.IsNullOrEmpty(key))
+        {
+            return false;
+        }
+
+        var given = http.Request.Headers[Header].ToString();
+        return CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(given), Encoding.UTF8.GetBytes(key));
     }
 }

@@ -322,6 +322,7 @@ The schema is plain SQL in numbered files in
 | `0003_incident_forecasts.sql` | `incident_forecasts` |
 | `0004_operations.sql` | `incident_events` (timeline), `resources` (fleet), `airspace_reservations` |
 | `0005_job_runs.sql` | `job_runs`: when each background job last started, finished and succeeded, and who started it |
+| `0006_citizen_reports.sql` | `citizen_reports`: reports from the public, with a `CHECK` that a reviewed report says who and when |
 
 The files are compiled into the DLL (`<EmbeddedResource>` in the .csproj). On start-up,
 [`DatabaseMigrator.cs`](../src/PyroLens.Infrastructure/Persistence/DatabaseMigrator.cs):
@@ -542,6 +543,26 @@ database").
 The web app's files are served from `wwwroot` with cache headers: `index.html` is always re-checked, files in
 `/assets` (whose names contain a hash of their content) are cached for a year.
 
+**The public endpoints** in [`ReportEndpoints.cs`](../src/PyroLens.Api/ReportEndpoints.cs) show four ways to protect a
+page anyone can open:
+
+- **Output caching** for the public map. In `Program.cs`, `AddOutputCache` defines a policy that keeps a response for
+  30 seconds, and `.CacheOutput("public-map")` puts the endpoint behind it. The first visitor in each half minute
+  runs the query; everyone else gets the stored answer (you can see an `Age` header on cached responses).
+- **Rate limiting per client** for reports: a second policy next to the operator one, 3 requests per 10 minutes per
+  IP address (`RateLimitPartition.GetFixedWindowLimiter`). The 4th request gets `429 Too Many Requests` without
+  reaching the code.
+- **A honeypot**: the form has a field called `website`, hidden from people with CSS. Bots fill in every field, so a
+  value there means spam. The server answers exactly as for a real report, so the bot learns nothing, and stores
+  nothing.
+- **Validation in the database**: the report is stored with `INSERT … SELECT … WHERE EXISTS (… ST_Intersects …)`.
+  If the point is not in Greece, no row is inserted, and the API answers 422. One statement, no window between the
+  check and the insert.
+
+`app.MapFallbackToFile("/public/{**rest}", "index.html", …)` sends the web app for `/public` (there is no file by that
+name), and [`main.tsx`](../web/src/main.tsx) shows the public view when the path starts with `/public`. Other unknown
+paths, including mistyped `/api/...` ones, still get a 404 instead of a web page.
+
 ## 12. The web app (React + TypeScript)
 
 Built with **Vite** (bundler and dev server), **React** (UI as components), **TypeScript** (JavaScript with types,
@@ -558,6 +579,9 @@ checked by `tsc`) and **MapLibre GL** (the map, drawn with WebGL from vector til
 | [`places.ts`](../web/src/places.ts) | Names fires after the nearest town ("6 km south of Feres") |
 | [`operations.ts`](../web/src/operations.ts) | Status words, log sentences, the forecast sentence |
 | [`theme.ts`](../web/src/theme.ts) · [`styles.css`](../web/src/styles.css) | Light/dark theme: colour variables per theme |
+| [`mapBase.ts`](../web/src/mapBase.ts) | `useBaseMap`: a map of Greece that follows the theme, shared by both pages |
+| [`public/`](../web/src/public) | The public page: [`PublicApp`](../web/src/public/PublicApp.tsx), its map, and the [report form](../web/src/public/ReportForm.tsx) |
+| [`attention.ts`](../web/src/attention.ts) · [`reports.ts`](../web/src/reports.ts) | Escalation reasons and reports, in words |
 
 How data flows: `App` calls `usePolling(api.incidents, 60s)`. React re-renders when data arrives; `FireList` shows it;
 `MapView` pushes it into a MapLibre GeoJSON source with `setData`. Clicking a fire sets `selectedId`, which starts
@@ -651,6 +675,9 @@ Each takes 10–30 minutes and touches a different part.
 8. **A new escalation rule.** Add `Intense` to `AttentionRule`: a fire whose strongest pixel (`MaxFrpMegawatts`) is over
    100 MW. Add the fact to `AttentionFacts`, the column to the query in `AttentionService`, a case in `Evaluate`, a unit
    test, and a sentence in `web/src/attention.ts`. Which of those would the compiler remind you of?
+9. **See the cache and the limit work.** Run the API locally and request `http://localhost:8080/api/public/fires` twice
+   within 30 seconds (`Invoke-WebRequest` in PowerShell, or the browser's network tab): the second answer has an `Age`
+   header. Then send four reports in a row with `Invoke-WebRequest -Method Post` and read the fourth status code.
 
 ## 16. Glossary
 

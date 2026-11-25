@@ -2,6 +2,7 @@ using System.ComponentModel.DataAnnotations;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using PyroLens.Core.Incidents;
+using PyroLens.Core.Reports;
 using PyroLens.Infrastructure.Persistence;
 
 namespace PyroLens.Infrastructure.Operations;
@@ -58,6 +59,9 @@ public sealed class AttentionService(PyroLensDbContext db, TimeProvider clock, I
                      ORDER BY f.weather_from DESC OFFSET 1 LIMIT 1) AS "PreviousRating",
                    (SELECT count(*)::int FROM resources r
                      WHERE r.incident_id = i.id AND r.status = 'assigned') AS "AssignedUnits",
+                   (SELECT count(*)::int FROM citizen_reports c
+                     WHERE c.status <> 'dismissed' AND c.submitted_at >= {recentSince}
+                       AND ST_DWithin(c.location::geography, i.centroid::geography, {ReportRules.NearbyMeters})) AS "RecentReports",
                    ev.managed_since AS "ManagedSince",
                    ev.contained_at AS "ContainedAt",
                    ev.last_released_at AS "LastReleasedAt"
@@ -87,6 +91,7 @@ public sealed class AttentionService(PyroLensDbContext db, TimeProvider clock, I
         public string? LatestRating { get; set; }
         public string? PreviousRating { get; set; }
         public int AssignedUnits { get; set; }
+        public int RecentReports { get; set; }
         public DateTime? ManagedSince { get; set; }
         public DateTime? ContainedAt { get; set; }
         public DateTime? LastReleasedAt { get; set; }
@@ -100,7 +105,8 @@ public sealed class AttentionService(PyroLensDbContext db, TimeProvider clock, I
             AssignedUnits,
             Utc(ManagedSince),
             Utc(ContainedAt),
-            Utc(LastReleasedAt));
+            Utc(LastReleasedAt),
+            RecentReports);
 
         private static DateTimeOffset? Utc(DateTime? t) =>
             t is { } value ? new DateTimeOffset(DateTime.SpecifyKind(value, DateTimeKind.Utc)) : null;

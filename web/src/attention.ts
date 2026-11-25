@@ -4,7 +4,7 @@ import { RATINGS } from './ratings';
 /** Literal colours: the map paints them in WebGL, where CSS variables do not exist. */
 export const ATTENTION_COLORS: Record<AttentionLevel, string> = { urgent: '#e03131', watch: '#e8a33d' };
 
-const RULE_ORDER: Attention['rule'][] = ['noUnits', 'burningAgain', 'danger', 'spreading'];
+const RULE_ORDER: Attention['rule'][] = ['noUnits', 'burningAgain', 'danger', 'reported', 'spreading'];
 
 /** "less than a minute", "34 min", "1 h", "2 h 5 min". */
 export function duration(fromIso: string, now: number): string {
@@ -31,6 +31,8 @@ export function describeAttention(a: Attention, now: number = Date.now()): strin
     case 'danger':
       if (a.from && a.to) return `Fire danger rose from ${dangerWord(a.from)} to ${dangerWord(a.to)}`;
       return a.to ? `${RATINGS[a.to].short} fire danger` : 'High fire danger';
+    case 'reported':
+      return `${plural(a.reports ?? 1, 'report')} from the public nearby`;
   }
 }
 

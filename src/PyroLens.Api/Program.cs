@@ -30,7 +30,16 @@ builder.Services.AddRateLimiter(options =>
     options.AddPolicy(OperationsEndpoints.RateLimitPolicy, http => RateLimitPartition.GetFixedWindowLimiter(
         ClientAddress(http),
         _ => new FixedWindowRateLimiterOptions { PermitLimit = 30, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
+
+    // Reports from the public: 3 per 10 minutes per client is plenty for a person and stops a script flooding the board.
+    options.AddPolicy(ReportEndpoints.SubmitPolicy, http => RateLimitPartition.GetFixedWindowLimiter(
+        ClientAddress(http),
+        _ => new FixedWindowRateLimiterOptions { PermitLimit = 3, Window = TimeSpan.FromMinutes(10), QueueLimit = 0 }));
 });
+
+// The public map is the page a crowd opens during a big fire; one cached answer every 30 seconds serves them all.
+builder.Services.AddOutputCache(options =>
+    options.AddPolicy(ReportEndpoints.PublicCachePolicy, policy => policy.Expire(TimeSpan.FromSeconds(30))));
 
 var app = builder.Build();
 
@@ -42,10 +51,10 @@ if (liveRefreshProblem is not null)
 app.UseExceptionHandler();
 app.UseStatusCodePages();
 app.UseRateLimiter();
+app.UseOutputCache();
 
 // The map (web/, built into wwwroot by the Dockerfile) is served from the same origin as the API.
-app.UseDefaultFiles();
-app.UseStaticFiles(new StaticFileOptions
+var staticFiles = new StaticFileOptions
 {
     // index.html is always revalidated so a deploy shows up at once; the files in /assets have a content hash
     // in their names, so they can be cached for a year.
@@ -56,7 +65,12 @@ app.UseStaticFiles(new StaticFileOptions
             : context.Context.Request.Path.StartsWithSegments("/assets") ? "public, max-age=31536000, immutable"
             : "public, max-age=3600";
     },
-});
+};
+app.UseDefaultFiles();
+app.UseStaticFiles(staticFiles);
+
+// The public page is the same web app at another address; the app reads the path and shows the citizen view.
+app.MapFallbackToFile("/public/{**rest}", "index.html", staticFiles);
 
 app.MapHealthChecks("/health/live", new HealthCheckOptions { Predicate = _ => false });
 app.MapHealthChecks("/health/ready", new HealthCheckOptions { Predicate = c => c.Tags.Contains("ready") });
@@ -64,6 +78,7 @@ app.MapHealthChecks("/health/ready", new HealthCheckOptions { Predicate = c => c
 var api = app.MapGroup("/api");
 api.MapPyroLensEndpoints();
 api.MapOperationsEndpoints();
+api.MapReportEndpoints();
 
 app.Run();
 

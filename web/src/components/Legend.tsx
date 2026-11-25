@@ -2,6 +2,7 @@ import type { CSSProperties } from 'react';
 import type { Incident } from '../api';
 import { ATTENTION_COLORS } from '../attention';
 import { RATINGS, ratingStyle } from '../ratings';
+import { REPORT_COLOR } from '../reports';
 import { AIRSPACE_COLORS } from './AirspaceTab';
 import { BURNING_COLOR, SELECTED_COLOR } from './MapView';
 
@@ -9,12 +10,13 @@ interface Props {
   selected: Incident | null;
   showAirspace: boolean;
   showAttention: boolean;
+  showReports: boolean;
   showPixels: boolean;
   onTogglePixels: (on: boolean) => void;
 }
 
 /** Map key, and the one map setting: show raw satellite pixels. */
-export function Legend({ selected, showAirspace, showAttention, showPixels, onTogglePixels }: Props) {
+export function Legend({ selected, showAirspace, showAttention, showReports, showPixels, onTogglePixels }: Props) {
   const colors = {
     '--forecast-color': selected ? ratingStyle(selected).color : BURNING_COLOR,
     '--burning-color': BURNING_COLOR,
@@ -31,6 +33,13 @@ export function Legend({ selected, showAirspace, showAttention, showPixels, onTo
           </li>
         ))}
       </ul>
+      {showReports && (
+        <ul className="legend-row">
+          <li>
+            <i className="legend-dot" style={{ background: REPORT_COLOR }} /> Report from the public
+          </li>
+        </ul>
+      )}
       {showAttention && (
         <ul className="legend-row">
           <li>

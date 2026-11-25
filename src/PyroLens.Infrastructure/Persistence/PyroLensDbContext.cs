@@ -19,6 +19,7 @@ public sealed class PyroLensDbContext(DbContextOptions<PyroLensDbContext> option
     public DbSet<Resource> Resources => Set<Resource>();
     public DbSet<AirspaceReservation> Airspace => Set<AirspaceReservation>();
     public DbSet<JobRun> JobRuns => Set<JobRun>();
+    public DbSet<CitizenReport> Reports => Set<CitizenReport>();
 
     /// <summary>Database spelling of an enum value: StatusChanged -> "status_changed".</summary>
     public static string ToSnakeCase<T>(T value) where T : struct, Enum =>
@@ -181,6 +182,20 @@ public sealed class PyroLensDbContext(DbContextOptions<PyroLensDbContext> option
             e.Property(x => x.LastStartedBy).HasColumnName("last_started_by");
             e.Property(x => x.LastFinishedAt).HasColumnName("last_finished_at");
             e.Property(x => x.LastSucceededAt).HasColumnName("last_succeeded_at");
+        });
+
+        model.Entity<CitizenReport>(e =>
+        {
+            e.ToTable("citizen_reports");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).HasColumnName("id").ValueGeneratedOnAdd();
+            e.Property(x => x.Location).HasColumnName("location").HasColumnType("geometry(Point,4326)");
+            e.Property(x => x.Kind).HasColumnName("kind").HasConversion(SnakeCase<Core.Reports.ReportKind>());
+            e.Property(x => x.Note).HasColumnName("note");
+            e.Property(x => x.SubmittedAt).HasColumnName("submitted_at");
+            e.Property(x => x.Status).HasColumnName("status").HasConversion(SnakeCase<Core.Reports.ReportStatus>());
+            e.Property(x => x.ReviewedBy).HasColumnName("reviewed_by");
+            e.Property(x => x.ReviewedAt).HasColumnName("reviewed_at");
         });
     }
 }

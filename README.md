@@ -15,7 +15,7 @@ and (on the roadmap) helps a dispatcher coordinate resources, airspace and publi
 ![Tests](https://img.shields.io/badge/tests-xUnit%20%2B%20Testcontainers-success)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-**[Live demo → pyrolens.onrender.com](https://pyrolens.onrender.com)** · **[How it works: a guided tour of the code →](docs/GUIDE.md)**
+**[Live demo → pyrolens.onrender.com](https://pyrolens.onrender.com)** · **[Public page](https://pyrolens.onrender.com/public)** · **[How it works: a guided tour of the code →](docs/GUIDE.md)**
 <sub>Free hosting: the first visit after a quiet period can take up to a minute while the server wakes up.</sub>
 
 </div>
@@ -95,7 +95,7 @@ Measured in the integration tests: **20 concurrent reservations of one aircraft 
 
 ### Escalation rules: which fires need attention
 
-Four rules flag a fire, each with a level (*urgent* or *worth a look*) and the facts behind it:
+Five rules flag a fire, each with a level (*urgent* or *worth a look*) and the facts behind it:
 
 | Rule | When | Level |
 |---|---|---|
@@ -103,6 +103,7 @@ Four rules flag a fire, each with a level (*urgent* or *worth a look*) and the f
 | **Burning again** | Marked contained, but satellites see new pixels after that | Urgent |
 | **Danger** | The +3 h forecast is *very high* or worse, or the rating rose since the previous forecast | Urgent / worth a look |
 | **Spreading** | 3 or more new satellite pixels in the last 6 hours | Worth a look |
+| **Reported** | A report from the public within 3 km in the last 6 hours, not dismissed | Worth a look |
 
 The rules are a pure function in [`Attention.cs`](src/PyroLens.Core/Incidents/Attention.cs), fed by one SQL query
 ([`AttentionService.cs`](src/PyroLens.Infrastructure/Operations/AttentionService.cs)) that reads pixels, forecasts,
@@ -111,6 +112,26 @@ moment its condition holds and goes away by itself once a unit is sent or the da
 (`Attention__NoUnitsAfter`, `Attention__SpreadingPixels`, `Attention__SpreadingWindow`). Flagged fires are listed
 first under *Needs attention* with their main reason (*"No units sent for 34 min"*), get a red or amber ring on the
 map, and show every reason on their page.
+
+### Public page and reports from the public
+
+**[pyrolens.onrender.com/public](https://pyrolens.onrender.com/public)** is the page for everyone else. It is the same
+web app at another address: the server sends `index.html` for `/public`, and the app picks the view from the path.
+
+- **A calm map**: fires dispatchers are handling (being fought, confirmed, contained) as solid dots, and satellite
+  detections nobody has confirmed as faint rings, with the plain warning that many are farm burning or industry. No
+  units, airspace or forecasts, and coordinates rounded to about 100 m.
+- **Served from a cache**: `GET /api/public/fires` goes through ASP.NET Core **output caching** for 30 seconds, so a
+  crowd opening the page during a big fire costs one database query per half minute, not one per visitor.
+- **Report a fire** in three steps: tap the map (or *Use my location*) and drag the pin if needed, choose *smoke*,
+  *flames* or *something else*, add an optional note. No name, phone number or IP address is stored.
+- **Spam limits**: 3 reports per 10 minutes per client (rate limiter), a hidden field that only bots fill in (they get
+  the same *thank you*, and nothing is stored), notes up to 500 characters, and PostGIS checks the point is in Greece
+  or within 2 km of its coast in the same `INSERT … SELECT … WHERE EXISTS` that stores it.
+- **For dispatchers**: reports appear on their map (blue) and in a *Reports from the public* list with the nearest
+  open fire within 3 km. Each one can be marked *seen* or *dismissed* (a conditional update: doing it twice is a 409).
+  Notes are free text from anyone, so the API sends them only with the operator key. A fire with a report nearby in
+  the last 6 hours trips a new escalation rule: *"2 reports from the public nearby"*.
 
 ### The web app
 
@@ -235,6 +256,9 @@ npm run dev
 | `GET /api/incidents/{id}/resources/suggestions?limit=6` | Free units by ETA, with distance |
 | `GET /api/resources` · `GET /api/airspace?incidentId=` | The fleet with its state; live airspace reservations (GeoJSON areas) |
 | `GET /api/detections?hours=24&modisConfidenceAbove=70&viirsConfidence=nominal,high&includeIndustrial=false&includeOutsideArea=false` | Raw detections with a per-request confidence filter; outside Greece hidden by default |
+| `GET /api/public/fires` | The public map: fires on the board with status, rounded position and danger rating only. Output-cached for 30 s |
+| `POST /api/public/reports` | Anyone: `{ "latitude": 38.05, "longitude": 23.8, "kind": "smoke", "note": "…" }` → 201 · 422 outside Greece or note too long · 429 above 3 per 10 minutes |
+| `GET /api/reports?hours=24&includeDismissed=false` | Reports with the nearest open fire within 3 km; `note` only with the operator key |
 | `GET /health/live` · `GET /health/ready` | Liveness; readiness including PostgreSQL |
 
 Dispatcher actions (header `X-Operator-Key`; 401 without it, 403 when the server is read-only, 429 above 30 a minute):
@@ -246,6 +270,7 @@ Dispatcher actions (header `X-Operator-Key`; 401 without it, 403 when the server
 | `POST /api/resources/{id}/assign` · `/release` | `{ "incidentId": 38 }` | 200 · 409 hold expired or not this incident's |
 | `POST /api/incidents/{id}/airspace` | `{ "level": "high", "radiusMeters": 3000, "durationMinutes": 120 }` | 200 · 409 overlaps a reservation (named) · 422 invalid window |
 | `DELETE /api/airspace/{id}` | – | 200 · 409 already cancelled |
+| `POST /api/reports/{id}/review` | `{ "status": "seen" }` or `"dismissed"` | 200 · 409 already in that state or dismissed · 404 |
 
 <details>
 <summary>Example response</summary>
@@ -285,6 +310,9 @@ once, exactly one runs it**.
 Escalation rules: every rule and boundary as unit tests (19 vs 20 minutes, 2 vs 3 pixels, falling danger), and on real
 data: the sample's spreading fires, *no units* through confirm → send → release, a contained fire that gets a new pixel,
 and danger rising between two forecasts.
+Reports: Athens, Heraklion and a point 1 km off Piraeus accepted, Sofia and the open Ionian Sea refused; the nearest
+fire found within 3 km; long notes refused rather than cut; review only moves forward (seen, then dismissed; twice is a
+conflict); a report near a fire flags it until it is dismissed or 6 hours old.
 
 The unit tests check the FFDI equation and rating bands, spread rate, ellipse shape and orientation (a north wind pushes
 the fire south, the width is length / LB, a turning wind bends the direction) and both parsers on real responses.
@@ -307,7 +335,8 @@ builds the map, and builds both Docker images.
 - [x] **Escalation rules**: flag incidents that spread, burn again after containment, worsen in danger band or have no units after N minutes
 - [x] **Fresh live data**: the site runs the jobs itself while someone is visiting; `job_runs` keeps every runner from repeating another's work
 - [ ] **LLM assistant**: incident summaries and draft announcements with structured output, fallback and human approval
-- [ ] **Citizens**: public map served from cache, report form, radius-based alerts through a queue with dead-lettering
+- [x] **Citizens**: public map served from cache, report form with spam limits, reports reviewed by dispatchers
+- [ ] **Alerts**: radius-based alerts to subscribers through a queue with dead-lettering
 - [ ] **Scale**: k6 load tests (telemetry ingest, public map peak, resource races, airspace overlap) with before/after numbers
 - [x] **Live demo** on free tiers: Supabase (PostGIS), GitHub Actions (scheduled jobs), Render (API and map)
 - [ ] **Azure**: Container Apps, PostgreSQL Flexible Server and Entra sign-in, described in Bicep (ready, not deployed: about $15–20/month)

@@ -285,7 +285,7 @@ public static class Endpoints
     }
 
     /// <summary>Latest longest-horizon forecast per incident, in one query.</summary>
-    private static async Task<Dictionary<long, ForecastSummaryDto>> LatestForecastSummariesAsync(
+    internal static async Task<Dictionary<long, ForecastSummaryDto>> LatestForecastSummariesAsync(
         PyroLensDbContext db, List<long> incidentIds, CancellationToken ct)
     {
         if (incidentIds.Count == 0)
@@ -308,7 +308,7 @@ public static class Endpoints
     }
 
     /// <summary>Not closed, and recently detected or managed by a dispatcher.</summary>
-    private static IQueryable<Incident> OnBoard(IQueryable<Incident> incidents, DateTimeOffset since) =>
+    internal static IQueryable<Incident> OnBoard(IQueryable<Incident> incidents, DateTimeOffset since) =>
         incidents.Where(i => i.Status != IncidentStatus.Closed &&
                              (i.LastDetectedAt >= since ||
                               i.Status == IncidentStatus.Confirmed || i.Status == IncidentStatus.Active || i.Status == IncidentStatus.Contained));

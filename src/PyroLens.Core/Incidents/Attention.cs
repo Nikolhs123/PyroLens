@@ -16,6 +16,9 @@ public enum AttentionRule
 
     /// <summary>Fire danger is very high or worse, or rose since the previous forecast.</summary>
     Danger,
+
+    /// <summary>People nearby reported smoke or flames recently.</summary>
+    Reported,
 }
 
 public enum AttentionLevel
@@ -33,6 +36,7 @@ public enum AttentionLevel
 /// <param name="WithinHours">Spreading: the window the pixels were counted in.</param>
 /// <param name="From">Danger: the previous forecast's rating, when it rose.</param>
 /// <param name="To">Danger: the current rating.</param>
+/// <param name="Reports">Reported: how many reports from the public.</param>
 public sealed record Attention(
     AttentionRule Rule,
     AttentionLevel Level,
@@ -40,7 +44,8 @@ public sealed record Attention(
     int? Pixels = null,
     int? WithinHours = null,
     FireDangerRating? From = null,
-    FireDangerRating? To = null);
+    FireDangerRating? To = null,
+    int? Reports = null);
 
 /// <summary>What the rules look at for one incident, gathered by a single query.</summary>
 /// <param name="RecentPixels">Satellite pixels acquired in the last <see cref="AttentionSettings.SpreadingWindow"/>.</param>
@@ -51,6 +56,7 @@ public sealed record Attention(
 /// <param name="ManagedSince">When a dispatcher last took it on: confirmed it, or reported a flare-up.</param>
 /// <param name="ContainedAt">When it was last marked contained.</param>
 /// <param name="LastReleasedAt">When its last unit was released.</param>
+/// <param name="RecentReports">Reports from the public within 3 km in the same window, not dismissed.</param>
 public sealed record AttentionFacts(
     IncidentStatus Status,
     int RecentPixels,
@@ -60,7 +66,8 @@ public sealed record AttentionFacts(
     int AssignedUnits,
     DateTimeOffset? ManagedSince,
     DateTimeOffset? ContainedAt,
-    DateTimeOffset? LastReleasedAt);
+    DateTimeOffset? LastReleasedAt,
+    int RecentReports = 0);
 
 public sealed record AttentionSettings(TimeSpan NoUnitsAfter, int SpreadingPixels, TimeSpan SpreadingWindow)
 {
@@ -120,6 +127,13 @@ public static class AttentionRules
             {
                 flags.Add(new Attention(AttentionRule.Danger, AttentionLevel.Watch, From: f.PreviousRating, To: latest));
             }
+        }
+
+        // People on the ground confirm what the satellites saw (or see what they missed).
+        if (f.RecentReports > 0)
+        {
+            flags.Add(new Attention(
+                AttentionRule.Reported, AttentionLevel.Watch, Reports: f.RecentReports, WithinHours: (int)Math.Round(s.SpreadingWindow.TotalHours)));
         }
 
         return flags;

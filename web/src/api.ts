@@ -87,7 +87,7 @@ export interface Forecast {
   horizons: Horizon[];
 }
 
-export type AttentionRule = 'noUnits' | 'spreading' | 'burningAgain' | 'danger';
+export type AttentionRule = 'noUnits' | 'spreading' | 'burningAgain' | 'danger' | 'reported';
 export type AttentionLevel = 'watch' | 'urgent';
 
 /** One reason a fire needs a dispatcher's attention (escalation rules). Only the fields its rule uses are set. */
@@ -100,6 +100,8 @@ export interface Attention {
   withinHours: number | null;
   from: DangerRating | null;
   to: DangerRating | null;
+  /** reported: how many reports from the public. */
+  reports?: number | null;
 }
 
 /** Who starts a background job: the worker container, the GitHub schedule, or the website itself on a visit. */
@@ -163,9 +165,47 @@ export interface AirspaceReservation {
   area: Polygon;
 }
 
+// ---------- Reports from the public ----------
+
+export type ReportKind = 'smoke' | 'flames' | 'other';
+export type ReportStatus = 'new' | 'seen' | 'dismissed';
+
+export interface Report {
+  id: number;
+  latitude: number;
+  longitude: number;
+  kind: ReportKind;
+  /** Only sent to dispatchers with the operator key. */
+  note: string | null;
+  submittedAt: string;
+  status: ReportStatus;
+  reviewedBy: string | null;
+  reviewedAt: string | null;
+  /** The open fire nearest to the report, if one is within 3 km. */
+  nearestIncidentId: number | null;
+  nearestIncidentMeters: number | null;
+}
+
+/** A fire as the public map shows it: no units, airspace or forecasts. */
+export interface PublicFire {
+  id: number;
+  status: IncidentStatus;
+  latitude: number;
+  longitude: number;
+  dangerRating: DangerRating | null;
+  lastSeenAt: string;
+}
+
+export interface ReportReceipt {
+  id: number | null;
+  message: string;
+}
+
 /** GET a JSON resource; null when the API answers 404 (e.g. no forecast yet). */
-async function getJson<T>(url: string, signal?: AbortSignal): Promise<T | null> {
-  const response = await fetch(url, { signal, headers: { Accept: 'application/json' } });
+async function getJson<T>(url: string, signal?: AbortSignal, operatorKey?: string | null): Promise<T | null> {
+  const headers: Record<string, string> = { Accept: 'application/json' };
+  if (operatorKey) headers['X-Operator-Key'] = operatorKey;
+  const response = await fetch(url, { signal, headers });
   if (response.status === 404) return null;
   if (!response.ok) throw new Error(`${url} answered ${response.status}`);
   return (await response.json()) as T;
@@ -181,6 +221,10 @@ export const api = {
   suggestions: (id: number, signal?: AbortSignal) =>
     getJson<Suggestion[]>(`/api/incidents/${id}/resources/suggestions?limit=6`, signal).then((r) => r ?? []),
   airspace: (signal?: AbortSignal) => getJson<AirspaceReservation[]>('/api/airspace', signal).then((r) => r ?? []),
+  /** Reports of the last 24 h, not dismissed. Notes are included only with the operator key. */
+  reports: (operatorKey: string | null, signal?: AbortSignal) =>
+    getJson<Report[]>('/api/reports?hours=24', signal, operatorKey).then((r) => r ?? []),
+  publicFires: (signal?: AbortSignal) => getJson<PublicFire[]>('/api/public/fires', signal).then((r) => r ?? []),
 };
 
 // ---------- Dispatcher actions ----------
@@ -188,14 +232,12 @@ export const api = {
 export type ActionResult<T> = { ok: true; value: T } | { ok: false; status: number; message: string };
 
 /** Sends a dispatcher action with the operator key; turns problem responses into a readable message. */
-async function send<T>(method: 'GET' | 'POST' | 'DELETE', url: string, key: string, body?: unknown): Promise<ActionResult<T>> {
+async function send<T>(method: 'GET' | 'POST' | 'DELETE', url: string, key: string | null, body?: unknown): Promise<ActionResult<T>> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json', Accept: 'application/json' };
+  if (key) headers['X-Operator-Key'] = key;
   let response: Response;
   try {
-    response = await fetch(url, {
-      method,
-      headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'X-Operator-Key': key },
-      body: body === undefined ? undefined : JSON.stringify(body),
-    });
+    response = await fetch(url, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
   } catch {
     return { ok: false, status: 0, message: 'The server cannot be reached. Try again in a moment.' };
   }
@@ -230,4 +272,10 @@ export const actions = {
     send<AirspaceReservation>('POST', `/api/incidents/${incidentId}/airspace`, key, { level, radiusMeters, durationMinutes }),
   cancelAirspace: (key: string, reservationId: number) =>
     send<AirspaceReservation>('DELETE', `/api/airspace/${reservationId}`, key),
+  reviewReport: (key: string, reportId: number, status: 'seen' | 'dismissed') =>
+    send<Report>('POST', `/api/reports/${reportId}/review`, key, { status }),
 };
+
+/** Anyone can send a report; `website` is the hidden field that only bots fill in. */
+export const submitReport = (report: { latitude: number; longitude: number; kind: ReportKind; note?: string; website?: string }) =>
+  send<ReportReceipt>('POST', '/api/public/reports', null, report);

@@ -1,38 +1,19 @@
-import type { Feature, FeatureCollection, Point } from 'geojson';
-import maplibregl, { type GeoJSONSource, type LngLatBoundsLike, type Map as MapLibreMap } from 'maplibre-gl';
-import { useEffect, useRef, useState } from 'react';
-import type { AirspaceReservation, Detection, Forecast, Incident, Resource } from '../api';
+import type { Feature, Point } from 'geojson';
+import maplibregl, { type Map as MapLibreMap } from 'maplibre-gl';
+import { useEffect, useRef } from 'react';
+import type { AirspaceReservation, Detection, Forecast, Incident, Report, Resource } from '../api';
 import { ATTENTION_COLORS, attentionLevel, describeAttention, sortAttention } from '../attention';
 import { bboxOf, padBBox } from '../geo';
+import { EMPTY, GREECE, PADDING, PAINT, source, useBaseMap } from '../mapBase';
 import { describePlace, nearestPlace } from '../places';
 import { ratingStyle } from '../ratings';
+import { REPORT_COLOR, describeReport } from '../reports';
 import type { Theme } from '../theme';
 import { AIRSPACE_COLORS } from './AirspaceTab';
-
-/**
- * Free vector tiles, no key (https://openfreemap.org). "liberty" is the bright, OpenStreetMap-like look of the
- * first version of the map; "dark" goes with the dark theme.
- */
-const STYLES: Record<Theme, string> = {
-  light: 'https://tiles.openfreemap.org/styles/liberty',
-  dark: 'https://tiles.openfreemap.org/styles/dark',
-};
-
-/** Overlay colours that depend on the basemap underneath. */
-const PAINT: Record<Theme, { outline: string; selected: string; label: string; halo: string }> = {
-  light: { outline: '#ffffff', selected: '#d98e00', label: '#7a4d00', halo: '#ffffff' },
-  dark: { outline: '#0a0e11', selected: '#ffb000', label: '#ffb000', halo: '#0a0e11' },
-};
 
 export const BURNING_COLOR = '#ff5a1f';
 export const SELECTED_COLOR = '#e3a008';
 const PIXEL_COLOR = '#ff8a3d';
-const GREECE: LngLatBoundsLike = [
-  [19.4, 34.8],
-  [28.3, 41.8],
-];
-const PADDING = 24;
-const EMPTY: FeatureCollection = { type: 'FeatureCollection', features: [] };
 
 /** Marker size grows with the number of satellite pixels, gently. */
 const radiusFor = (incident: Incident) => 4 + 2 * Math.sqrt(incident.detectionCount);
@@ -44,82 +25,39 @@ interface Props {
   forecast: Forecast | null;
   resources: Resource[];
   airspace: AirspaceReservation[];
+  reports: Report[];
+  selectedReport: Report | null;
   theme: Theme;
   onSelect: (id: number) => void;
+  onSelectReport: (id: number) => void;
 }
 
-export function MapView({ incidents, detections, selected, forecast, resources, airspace, theme, onSelect }: Props) {
-  const container = useRef<HTMLDivElement>(null);
-  const mapRef = useRef<MapLibreMap | null>(null);
+export function MapView({
+  incidents, detections, selected, forecast, resources, airspace, reports, selectedReport, theme, onSelect, onSelectReport,
+}: Props) {
   const onSelectRef = useRef(onSelect);
   onSelectRef.current = onSelect;
-  const themeRef = useRef(theme);
-  themeRef.current = theme;
+  const onSelectReportRef = useRef(onSelectReport);
+  onSelectReportRef.current = onSelectReport;
   const hadSelection = useRef(false);
-  // Counts loaded styles: our sources and layers are added again after every style change (theme switch),
-  // and the data effects below re-run when it changes.
-  const [styleVersion, setStyleVersion] = useState(0);
-  const ready = styleVersion > 0;
+  const { container, mapRef, styleVersion, ready } = useBaseMap(theme, addLayers, (map) =>
+    wireInteractions(map, (id) => onSelectRef.current(id), (id) => onSelectReportRef.current(id)),
+  );
 
-  // Create the map once.
-  useEffect(() => {
-    const element = container.current!;
-    const map = new maplibregl.Map({
-      container: element,
-      style: STYLES[themeRef.current],
-      bounds: GREECE,
-      fitBoundsOptions: { padding: PADDING },
-      attributionControl: false,
-      dragRotate: false,
-      pitchWithRotate: false,
-    });
-    map.touchZoomRotate.disableRotation();
-    map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');
-    map.addControl(
-      new maplibregl.AttributionControl({ compact: true, customAttribution: 'Fires: NASA FIRMS · Weather: Open-Meteo' }),
-      'bottom-right',
-    );
-
-    // Fires for the first style and after every setStyle: a new style has none of our layers.
-    map.on('style.load', () => {
-      addLayers(map, themeRef.current);
-      setStyleVersion((v) => v + 1);
-    });
-    // Listeners bound to layer ids survive style changes, so these are added once.
-    map.once('load', () => wireInteractions(map, (id) => onSelectRef.current(id)));
-
-    // The map measures its container when created. If the stylesheet arrived after the script (common on a
-    // cold-started host) that size is 0×0; re-measure on every size change and fit Greece once it is real.
-    const hasSize = () => element.clientWidth > 0 && element.clientHeight > 0;
-    let sized = hasSize();
-    const observer = new ResizeObserver(() => {
-      map.resize();
-      if (!sized && hasSize()) {
-        sized = true;
-        map.fitBounds(GREECE, { padding: PADDING, animate: false });
-      }
-    });
-    observer.observe(element);
-
-    mapRef.current = map;
-    return () => {
-      observer.disconnect();
-      map.remove();
-      mapRef.current = null;
-      setStyleVersion(0);
-    };
-  }, []);
-
-  // Switch basemap with the theme; the 'style.load' handler above restores our layers.
-  const appliedTheme = useRef(theme);
+  // Reports from the public (last 24 h, not dismissed).
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || appliedTheme.current === theme) return;
-    appliedTheme.current = theme;
-    // diff: false forces a full reload. With the default diff, MapLibre would remove our layers (they are not in
-    // the new style) without firing 'style.load', so they would never come back.
-    map.setStyle(STYLES[theme], { diff: false });
-  }, [theme]);
+    if (!ready || !map) return;
+
+    source(map, 'reports').setData({
+      type: 'FeatureCollection',
+      features: reports.map((r) => ({
+        type: 'Feature',
+        geometry: { type: 'Point', coordinates: [r.longitude, r.latitude] },
+        properties: { id: r.id, status: r.status, selected: r.id === selectedReport?.id, label: describeReport(r) },
+      })),
+    });
+  }, [styleVersion, reports, selectedReport?.id]);
 
   // Incidents and their burning footprints.
   useEffect(() => {
@@ -233,6 +171,12 @@ export function MapView({ incidents, detections, selected, forecast, resources, 
     const map = mapRef.current;
     if (!ready || !map) return;
 
+    if (selectedReport) {
+      hadSelection.current = true;
+      map.easeTo({ center: [selectedReport.longitude, selectedReport.latitude], zoom: Math.max(map.getZoom(), 11), duration: 600 });
+      return;
+    }
+
     if (!selected) {
       if (hadSelection.current) map.fitBounds(GREECE, { padding: PADDING, duration: 600 });
       hadSelection.current = false;
@@ -251,17 +195,10 @@ export function MapView({ incidents, detections, selected, forecast, resources, 
       { padding: 80, maxZoom: 14, duration: 600 },
     );
     // Re-fit when the selection or its forecast changes, not on every poll of the same data.
-  }, [ready, selected?.id, forecastKey]);
+  }, [ready, selected?.id, forecastKey, selectedReport?.id]);
 
   return <div ref={container} className="map" role="region" aria-label="Map of fire incidents in Greece" />;
 }
-
-/**
- * Our GeoJSON source, or a stand-in that ignores data while a style change is in progress (the new style has no
- * sources until 'style.load', and that handler bumps styleVersion so every effect pushes its data again).
- */
-const source = (map: MapLibreMap, id: string): Pick<GeoJSONSource, 'setData'> =>
-  (map.getSource(id) as GeoJSONSource | undefined) ?? { setData: () => undefined as never };
 
 const capitalise = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 
@@ -272,7 +209,7 @@ const capitalise = (text: string) => text.charAt(0).toUpperCase() + text.slice(1
  */
 function addLayers(map: MapLibreMap, theme: Theme) {
   const paint = PAINT[theme];
-  for (const id of ['airspace', 'forecast', 'footprints', 'units', 'pixels', 'incidents']) {
+  for (const id of ['airspace', 'forecast', 'footprints', 'units', 'pixels', 'reports', 'incidents']) {
     map.addSource(id, { type: 'geojson', data: EMPTY });
   }
 
@@ -363,6 +300,27 @@ function addLayers(map: MapLibreMap, theme: Theme) {
     source: 'pixels',
     paint: { 'circle-radius': 2.5, 'circle-color': PIXEL_COLOR, 'circle-opacity': 0.9 },
   });
+  // Reports from the public: blue dots, faded once a dispatcher has seen them.
+  map.addLayer({
+    id: 'reports-selected',
+    type: 'circle',
+    source: 'reports',
+    filter: ['==', ['get', 'selected'], true],
+    paint: { 'circle-radius': 11, 'circle-color': 'rgba(0, 0, 0, 0)', 'circle-stroke-color': paint.selected, 'circle-stroke-width': 2.5 },
+  });
+  map.addLayer({
+    id: 'reports',
+    type: 'circle',
+    source: 'reports',
+    paint: {
+      'circle-radius': 6,
+      'circle-color': REPORT_COLOR,
+      'circle-opacity': ['case', ['==', ['get', 'status'], 'new'], 1, 0.45],
+      'circle-stroke-color': paint.outline,
+      'circle-stroke-width': 2,
+    },
+  });
+
   // Fires that need attention: a red (urgent) or amber (watch) ring just outside the marker.
   map.addLayer({
     id: 'incidents-attention',
@@ -402,23 +360,25 @@ function addLayers(map: MapLibreMap, theme: Theme) {
   });
 }
 
-/** Hover label and click-to-select on incident markers. */
-function wireInteractions(map: MapLibreMap, select: (id: number) => void) {
+/** Hover label and click-to-select on fire and report markers. */
+function wireInteractions(map: MapLibreMap, selectFire: (id: number) => void, selectReport: (id: number) => void) {
   const popup = new maplibregl.Popup({ closeButton: false, closeOnClick: false, offset: 12, className: 'pl-popup' });
 
-  map.on('mouseenter', 'incidents', (e) => {
-    map.getCanvas().style.cursor = 'pointer';
-    const feature = e.features?.[0];
-    if (!feature) return;
-    const [lng, lat] = (feature.geometry as Point).coordinates;
-    popup.setLngLat([lng, lat]).setText(String(feature.properties?.label ?? '')).addTo(map);
-  });
-  map.on('mouseleave', 'incidents', () => {
-    map.getCanvas().style.cursor = '';
-    popup.remove();
-  });
-  map.on('click', 'incidents', (e) => {
-    const id = Number(e.features?.[0]?.properties?.id);
-    if (Number.isFinite(id)) select(id);
-  });
+  for (const [layer, select] of [['incidents', selectFire], ['reports', selectReport]] as const) {
+    map.on('mouseenter', layer, (e) => {
+      map.getCanvas().style.cursor = 'pointer';
+      const feature = e.features?.[0];
+      if (!feature) return;
+      const [lng, lat] = (feature.geometry as Point).coordinates;
+      popup.setLngLat([lng, lat]).setText(String(feature.properties?.label ?? '')).addTo(map);
+    });
+    map.on('mouseleave', layer, () => {
+      map.getCanvas().style.cursor = '';
+      popup.remove();
+    });
+    map.on('click', layer, (e) => {
+      const id = Number(e.features?.[0]?.properties?.id);
+      if (Number.isFinite(id)) select(id);
+    });
+  }
 }

@@ -1,29 +1,32 @@
 import type { ReactNode } from 'react';
-import type { Incident, IncidentStatus } from '../api';
+import type { Incident, IncidentStatus, Report } from '../api';
 import { ATTENTION_COLORS, attentionLevel, describeAttention, sortAttention } from '../attention';
 import { relativeTime } from '../format';
 import { sortIncidents } from '../incidents';
 import { STATUS } from '../operations';
 import { nearestPlace } from '../places';
 import { ratingStyle } from '../ratings';
+import { REPORT_COLOR, describeReport, reportPlace, sortReports } from '../reports';
 import { useNow } from '../usePolling';
 
 const GROUP_ORDER: IncidentStatus[] = ['active', 'confirmed', 'contained', 'detected'];
 
 interface Props {
   incidents: Incident[];
+  reports: Report[];
   onOpen: (id: number) => void;
+  onOpenReport: (id: number) => void;
 }
 
 /**
  * The board: first the fires that need attention (escalation rules), then the rest grouped by what is happening to
  * them, most dangerous first within each group. A fire appears once.
  */
-export function FireList({ incidents, onOpen }: Props) {
+export function FireList({ incidents, reports, onOpen, onOpenReport }: Props) {
   // Ticks so "No units sent for 34 min" counts up between refreshes.
   const now = useNow(30_000);
 
-  if (incidents.length === 0) {
+  if (incidents.length === 0 && reports.length === 0) {
     return (
       <div className="empty">
         <p>No fires on the board.</p>
@@ -44,6 +47,24 @@ export function FireList({ incidents, onOpen }: Props) {
         <Group id="attention" title="Needs attention" color={ATTENTION_COLORS.urgent} count={flagged.length}>
           {flagged.map((i) => (
             <FireRow key={i.id} incident={i} now={now} onOpen={onOpen} withReason />
+          ))}
+        </Group>
+      )}
+      {reports.length > 0 && (
+        <Group id="reports" title="Reports from the public" color={REPORT_COLOR} count={reports.length}>
+          {sortReports(reports).map((r) => (
+            <li key={`r${r.id}`}>
+              <button type="button" className={`fire-row report-row ${r.status}`} onClick={() => onOpenReport(r.id)}>
+                <span className="fire-dot" style={{ background: REPORT_COLOR }} aria-hidden="true" />
+                <span className="fire-main">
+                  <span className="fire-title">{reportPlace(r)}</span>
+                  <span className="fire-sub">
+                    {describeReport(r, now)} · {r.nearestIncidentId != null ? `near fire #${r.nearestIncidentId}` : 'no fire near'}
+                  </span>
+                </span>
+                <span className="fire-danger">{r.status === 'new' ? 'New' : 'Seen'}</span>
+              </button>
+            </li>
           ))}
         </Group>
       )}

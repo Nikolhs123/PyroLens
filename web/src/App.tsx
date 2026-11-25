@@ -5,6 +5,7 @@ import { FireDetail } from './components/FireDetail';
 import { FireList } from './components/FireList';
 import { Legend } from './components/Legend';
 import { MapView } from './components/MapView';
+import { ReportDetail } from './components/ReportDetail';
 import { SidebarHeader } from './components/SidebarHeader';
 import { dataStamp, needsAttention } from './freshness';
 import { type Theme, applyTheme, initialTheme } from './theme';
@@ -34,6 +35,7 @@ const writeKey = (key: string | null) => {
 
 export function App() {
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [reportId, setReportId] = useState<number | null>(null);
   const [showPixels, setShowPixels] = useState(false);
   const [operatorKey, setOperatorKey] = useState<string | null>(readKey);
   const [theme, setTheme] = useState<Theme>(initialTheme);
@@ -49,9 +51,13 @@ export function App() {
   const resources = usePolling((s) => api.resources(s), OPS_REFRESH_MS, 'resources');
   const airspace = usePolling((s) => api.airspace(s), OPS_REFRESH_MS, 'airspace');
   const timeline = usePolling((s) => api.timeline(selectedId!, s), OPS_REFRESH_MS, selectedId, selectedId != null);
+  // With the operator key the server includes the reports' notes; a new key means a new request.
+  const reports = usePolling((s) => api.reports(operatorKey, s), OPS_REFRESH_MS, operatorKey ? 'reports:operator' : 'reports');
 
   const list = incidents.data ?? [];
   const selected = list.find((i) => i.id === selectedId) ?? null;
+  const reportList = reports.data ?? [];
+  const selectedReport = reportList.find((r) => r.id === reportId) ?? null;
   // undefined = still loading, null = none yet (or the request failed), otherwise this fire's forecast.
   const selectedForecast = forecast.error != null ? null : forecast.data;
 
@@ -75,7 +81,23 @@ export function App() {
     lastStamp.current = stamp;
   }, [stamp, reloadIncidents, reloadDetections, reloadForecast]);
 
-  const toggle = useCallback((id: number) => setSelectedId((current) => (current === id ? null : id)), []);
+  // One thing is open at a time: a fire or a report.
+  const toggle = useCallback((id: number) => {
+    setReportId(null);
+    setSelectedId((current) => (current === id ? null : id));
+  }, []);
+  const toggleReport = useCallback((id: number) => {
+    setSelectedId(null);
+    setReportId((current) => (current === id ? null : id));
+  }, []);
+  const openFire = (id: number) => {
+    setReportId(null);
+    setSelectedId(id);
+  };
+  const closeAll = () => {
+    setSelectedId(null);
+    setReportId(null);
+  };
 
   const unlock = (key: string) => {
     writeKey(key);
@@ -92,6 +114,7 @@ export function App() {
     resources.reload();
     airspace.reload();
     timeline.reload();
+    reports.reload();
   };
 
   // Esc goes back to the list; P toggles the pixel layer (outside form fields).
@@ -99,7 +122,10 @@ export function App() {
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
       if (target?.closest('input, select, textarea') || e.metaKey || e.ctrlKey || e.altKey) return;
-      if (e.key === 'Escape') setSelectedId(null);
+      if (e.key === 'Escape') {
+        setSelectedId(null);
+        setReportId(null);
+      }
       if (e.key === 'p' || e.key === 'P') setShowPixels((v) => !v);
     };
     window.addEventListener('keydown', onKey);
@@ -123,7 +149,15 @@ export function App() {
         />
 
         <div className="sb-body">
-          {selected ? (
+          {selectedReport ? (
+            <ReportDetail
+              report={selectedReport}
+              operatorKey={operatorKey}
+              onOpenFire={openFire}
+              onChanged={refreshAfterAction}
+              onBack={closeAll}
+            />
+          ) : selected ? (
             <FireDetail
               incident={selected}
               forecast={selectedForecast}
@@ -137,11 +171,13 @@ export function App() {
           ) : incidents.data === undefined ? (
             <p className="hint padded">{incidents.error ? 'Waiting for the server. A free server can take up to a minute to wake up.' : 'Loading fires…'}</p>
           ) : (
-            <FireList incidents={list} onOpen={setSelectedId} />
+            <FireList incidents={list} reports={reportList} onOpen={openFire} onOpenReport={toggleReport} />
           )}
         </div>
 
-        <footer className="sb-foot">Demo project, not an emergency service. In an emergency call 112.</footer>
+        <footer className="sb-foot">
+          Demo project, not an emergency service. In an emergency call 112. <a href="/public">Public page</a>
+        </footer>
       </aside>
 
       <main className="map-wrap">
@@ -152,14 +188,18 @@ export function App() {
           forecast={selected ? (selectedForecast ?? null) : null}
           resources={resources.data ?? []}
           airspace={liveAirspace}
+          reports={reportList}
+          selectedReport={selectedReport}
           theme={theme}
           onSelect={toggle}
+          onSelectReport={toggleReport}
         />
         <div className="map-overlay">
           <Legend
             selected={selected}
             showAirspace={liveAirspace.length > 0}
             showAttention={list.some((i) => attentionLevel(i) != null)}
+            showReports={reportList.length > 0}
             showPixels={showPixels}
             onTogglePixels={setShowPixels}
           />

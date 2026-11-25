@@ -48,6 +48,11 @@ describe('describeAttention', () => {
     );
     expect(describeAttention(flag({ rule: 'danger', to: 'extreme' }), now)).toBe('Extreme fire danger');
   });
+
+  it('counts reports from the public', () => {
+    expect(describeAttention(flag({ rule: 'reported', level: 'watch', reports: 1 }), now)).toBe('1 report from the public nearby');
+    expect(describeAttention(flag({ rule: 'reported', level: 'watch', reports: 3 }), now)).toBe('3 reports from the public nearby');
+  });
 });
 
 describe('sortAttention', () => {
